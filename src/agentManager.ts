@@ -107,19 +107,37 @@ export async function launchNewTerminal(
         shellArgs,
         cwd,
         (data) => {
-          const b64 = Buffer.from(data).toString('base64');
           const wv = getWebview();
-          if (!wv) {
-            console.warn(`[AgentManager] ⚠️ Webview is UNDEFINED for Agent ${id}. Data chunk of ${b64.length} dropped.`);
-          } else {
-            wv.postMessage({ type: 'agentTerminalData', id, data: b64 });
+          const a = agents.get(id);
+          if (!a) return;
+
+          // Convert raw data to string (strip some ANSI or handle as-is)
+          const chunk = data.toString('utf8');
+          a.lineBuffer += chunk;
+          
+          if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
+            const lines = a.lineBuffer.split(/\r?\n/);
+            // Keep the last partial line in the buffer
+            a.lineBuffer = lines.pop() || '';
+            
+            for (const line of lines) {
+              if (line.trim().length > 0) {
+                wv?.postMessage({ 
+                  type: 'agentTerminalText', 
+                  id, 
+                  content: line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, ''), 
+                  streamType: 'shell' 
+                });
+              }
+            }
           }
 
-          const a = agents.get(id);
-          if (a) {
-            a.terminalBuffer.push(b64);
-            if (a.terminalBuffer.length > 1000) a.terminalBuffer.shift();
-          }
+          // Also keep base64 for legacy replaying if needed (optional)
+          const b64 = Buffer.from(data).toString('base64');
+          a.terminalBuffer.push(b64);
+          if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
+          
+          wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
         },
       );
 
