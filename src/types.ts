@@ -1,8 +1,10 @@
 import type * as vscode from 'vscode';
 
+import type { AgentPty } from './ptyManager.js';
+
 export interface AgentState {
   id: number;
-  terminalRef: vscode.Terminal;
+  terminalRef: vscode.Terminal | undefined;
   projectDir: string;
   jsonlFile: string;
   fileOffset: number;
@@ -24,6 +26,12 @@ export interface AgentState {
   linesProcessed: number;
   /** Set of record.type values we've already warned about (prevents log spam) */
   seenUnknownRecordTypes: Set<string>;
+  /** Provider ID for this agent (e.g. 'claude', 'openai', 'gemini') */
+  providerId: string;
+  /** Virtual terminal instance for real-time embedding */
+  pty?: AgentPty | null;
+  /** Buffer of raw terminal data (Base64) to replay on webview reconnect */
+  terminalBuffer: string[];
 }
 
 export interface PersistedAgent {
@@ -33,4 +41,6 @@ export interface PersistedAgent {
   projectDir: string;
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /** Provider ID for this agent */
+  providerId: string;
 }

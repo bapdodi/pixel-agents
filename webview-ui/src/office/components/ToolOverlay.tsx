@@ -198,6 +198,27 @@ export function ToolOverlay({
                     {ch.folderName}
                   </span>
                 )}
+                {ch.providerId && (
+                  <span
+                    style={{
+                      fontSize: '14px',
+                      color:
+                        ch.providerId === 'openai'
+                          ? '#10a37f'
+                          : ch.providerId === 'gemini'
+                            ? '#4285f4'
+                            : 'var(--pixel-text-dim)',
+                      fontWeight: 'bold',
+                      display: 'block',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                      lineHeight: 1,
+                      marginTop: 2,
+                    }}
+                  >
+                    {ch.providerId}
+                  </span>
+                )}
               </div>
               {isSelected && !isSub && (
                 <button

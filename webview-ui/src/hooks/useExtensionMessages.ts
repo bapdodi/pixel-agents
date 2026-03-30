@@ -18,6 +18,12 @@ export interface SubagentCharacter {
   label: string;
 }
 
+export interface TerminalLine {
+  content: string;
+  type: 'thought' | 'shell';
+  timestamp: number;
+}
+
 export interface FurnitureAsset {
   id: string;
   name: string;
@@ -49,6 +55,7 @@ export interface WorkspaceFolder {
 export interface ExtensionMessageState {
   agents: number[];
   selectedAgent: number | null;
+  setSelectedAgent: (id: number | null) => void;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
@@ -60,6 +67,8 @@ export interface ExtensionMessageState {
   externalAssetDirectories: string[];
   lastSeenVersion: string;
   extensionVersion: string;
+  agentTerminalLines: Record<number, TerminalLine[]>;
+  agentTerminalRawData: Record<number, string[]>;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -93,6 +102,8 @@ export function useExtensionMessages(
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
+  const [agentTerminalLines, setAgentTerminalLines] = useState<Record<number, TerminalLine[]>>({});
+  const [agentTerminalRawData, setAgentTerminalRawData] = useState<Record<number, string[]>>({});
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -105,13 +116,28 @@ export function useExtensionMessages(
       hueShift?: number;
       seatId?: string;
       folderName?: string;
+      providerId?: string;
     }> = [];
+
+    // Report any early errors captured during bootstrap
+    const pendingErrors = (window as any).__pixelAgentsPendingErrors as any[];
+    if (pendingErrors && pendingErrors.length > 0) {
+      for (const e of pendingErrors) {
+        vscode.postMessage({ type: 'webviewError', error: e });
+      }
+      (window as any).__pixelAgentsPendingErrors = [];
+    }
 
     const handler = (e: MessageEvent) => {
       const msg = e.data;
       const os = getOfficeState();
 
+      if (msg && msg.type) {
+        console.log(`[Webview] 📬 Incoming message: ${msg.type}`, msg);
+      }
+
       if (msg.type === 'layoutLoaded') {
+        console.log(`[Webview] 🏠 Layout loaded (revision: ${msg.layout ? (msg.layout as any).revision : 'N/A'})`);
         // Skip external layout updates while editor has unsaved changes
         if (layoutReadyRef.current && isEditDirty?.()) {
           console.log('[Webview] Skipping external layout update — editor has unsaved changes');
@@ -127,10 +153,13 @@ export function useExtensionMessages(
           onLayoutLoaded?.(os.getLayout());
         }
         // Add buffered agents now that layout (and seats) are correct
-        for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+        if (pendingAgents.length > 0) {
+          console.log(`[Webview] Adding ${pendingAgents.length} pending agent(s)`);
+          for (const p of pendingAgents) {
+            os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, p.providerId);
+          }
+          pendingAgents = [];
         }
-        pendingAgents = [];
         layoutReadyRef.current = true;
         setLayoutReady(true);
         if (msg.wasReset) {
@@ -141,15 +170,26 @@ export function useExtensionMessages(
         }
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number;
+        console.log(`[Webview] 🤖 Agent ${id} created`);
         const folderName = msg.folderName as string | undefined;
+        const providerId = msg.providerId as string | undefined;
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         setSelectedAgent(id);
-        os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+        os.addAgent(id, undefined, undefined, undefined, undefined, folderName, providerId);
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number;
-        setAgents((prev) => prev.filter((a) => a !== id));
-        setSelectedAgent((prev) => (prev === id ? null : prev));
+        setAgents((prev) => {
+          const next = prev.filter((a) => a !== id);
+          // Auto-select another agent if the deleted one was selected
+          setSelectedAgent((current) => {
+            if (current === id) {
+              return next.length > 0 ? next[0] : null;
+            }
+            return current;
+          });
+          return next;
+        });
         setAgentTools((prev) => {
           if (!(id in prev)) return prev;
           const next = { ...prev };
@@ -176,7 +216,7 @@ export function useExtensionMessages(
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<
           number,
-          { palette?: number; hueShift?: number; seatId?: string }
+          { palette?: number; hueShift?: number; seatId?: string; providerId?: string }
         >;
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
         // Buffer agents — they'll be added in layoutLoaded after seats are built
@@ -188,6 +228,7 @@ export function useExtensionMessages(
             hueShift: m?.hueShift,
             seatId: m?.seatId,
             folderName: folderNames[id],
+            providerId: m?.providerId,
           });
         }
         setAgents((prev) => {
@@ -200,6 +241,10 @@ export function useExtensionMessages(
           }
           return merged.sort((a, b) => a - b);
         });
+        // Select first agent if none selected
+        if (incoming.length > 0) {
+          setSelectedAgent((prev) => (prev === null ? incoming[0] : prev));
+        }
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
@@ -408,12 +453,29 @@ export function useExtensionMessages(
           const catalog = msg.catalog as FurnitureAsset[];
           const sprites = msg.sprites as Record<string, string[][]>;
           console.log(`📦 Webview: Loaded ${catalog.length} furniture assets`);
-          // Build dynamic catalog immediately so getCatalogEntry() works when layoutLoaded arrives next
           buildDynamicCatalog({ catalog, sprites });
           setLoadedAssets({ catalog, sprites });
         } catch (err) {
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
         }
+      } else if (msg.type === 'agentTerminalText') {
+        const id = msg.id as number;
+        const content = msg.content as string;
+        const type = msg.streamType as 'thought' | 'shell';
+        setAgentTerminalLines((prev) => {
+          const list = prev[id] || [];
+          const newLine: TerminalLine = { content, type, timestamp: Date.now() };
+          const nextList = [...list, newLine].slice(-50); // Keep last 50 lines
+          return { ...prev, [id]: nextList };
+        });
+      } else if (msg.type === 'agentTerminalData') {
+        const id = msg.id as number;
+        const data = msg.data as string; // Base64 encoded raw bytes
+        console.info(`[Webview] 📨 RECEIVED TERMINAL DATA (${data.length} bytes) for Agent ${id}`);
+        setAgentTerminalRawData((prev) => {
+          const list = prev[id] || [];
+          return { ...prev, [id]: [...list, data] };
+        });
       }
     };
     window.addEventListener('message', handler);
@@ -424,8 +486,11 @@ export function useExtensionMessages(
   return {
     agents,
     selectedAgent,
+    setSelectedAgent,
     agentTools,
     agentStatuses,
+    agentTerminalLines,
+    agentTerminalRawData,
     subagentTools,
     subagentCharacters,
     layoutReady,

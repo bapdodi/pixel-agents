@@ -11,6 +11,7 @@ import {
 interface ZoomControlsProps {
   zoom: number;
   onZoomChange: (zoom: number) => void;
+  topOffset?: number;
 }
 
 const btnBase: React.CSSProperties = {
@@ -28,7 +29,7 @@ const btnBase: React.CSSProperties = {
   boxShadow: 'var(--pixel-shadow)',
 };
 
-export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
+export function ZoomControls({ zoom, onZoomChange, topOffset }: ZoomControlsProps) {
   const [hovered, setHovered] = useState<'minus' | 'plus' | null>(null);
   const [showLevel, setShowLevel] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
@@ -75,7 +76,7 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
         <div
           style={{
             position: 'absolute',
-            top: 10,
+            top: 10 + (topOffset || 0),
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 'var(--pixel-controls-z)',
@@ -100,10 +101,9 @@ export function ZoomControls({ zoom, onZoomChange }: ZoomControlsProps) {
       <div
         style={{
           position: 'absolute',
-          top: 8,
+          top: 8 + (topOffset || 0),
           left: 8,
           zIndex: 'var(--pixel-controls-z)',
-          display: 'flex',
           flexDirection: 'column',
           gap: 4,
         }}

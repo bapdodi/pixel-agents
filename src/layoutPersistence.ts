@@ -20,11 +20,12 @@ function getLayoutFilePath(): string {
   return path.join(os.homedir(), LAYOUT_FILE_DIR, LAYOUT_FILE_NAME);
 }
 
-export function readLayoutFromFile(): Record<string, unknown> | null {
+export async function readLayoutFromFile(): Promise<Record<string, unknown> | null> {
   const filePath = getLayoutFilePath();
   try {
-    if (!fs.existsSync(filePath)) return null;
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    const fileExists = await fs.promises.access(filePath, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!fileExists) return null;
+    const raw = await fs.promises.readFile(filePath, 'utf-8');
     return JSON.parse(raw) as Record<string, unknown>;
   } catch (err) {
     console.error('[Pixel Agents] Failed to read layout file:', err);
@@ -32,17 +33,18 @@ export function readLayoutFromFile(): Record<string, unknown> | null {
   }
 }
 
-export function writeLayoutToFile(layout: Record<string, unknown>): void {
+export async function writeLayoutToFile(layout: Record<string, unknown>): Promise<void> {
   const filePath = getLayoutFilePath();
   const dir = path.dirname(filePath);
   try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    const dirExists = await fs.promises.access(dir, fs.constants.F_OK).then(() => true).catch(() => false);
+    if (!dirExists) {
+      await fs.promises.mkdir(dir, { recursive: true });
     }
     const json = JSON.stringify(layout, null, 2);
     const tmpPath = filePath + '.tmp';
-    fs.writeFileSync(tmpPath, json, 'utf-8');
-    fs.renameSync(tmpPath, filePath);
+    await fs.promises.writeFile(tmpPath, json, 'utf-8');
+    await fs.promises.rename(tmpPath, filePath);
   } catch (err) {
     console.error('[Pixel Agents] Failed to write layout file:', err);
   }
@@ -55,18 +57,14 @@ export interface LayoutLoadResult {
 }
 
 /**
- * Load layout with migration from workspace state:
- * 1. If file exists → return it (reset if bundled default has a newer revision)
- * 2. Else if workspace state has layout → write to file, clear workspace state, return it
- * 3. Else if defaultLayout provided → write to file, return it
- * 4. Else → return null
+ * Load layout with migration from workspace state (Async)
  */
-export function migrateAndLoadLayout(
+export async function migrateAndLoadLayout(
   context: ExtensionContext,
   defaultLayout?: Record<string, unknown> | null,
-): LayoutLoadResult | null {
+): Promise<LayoutLoadResult | null> {
   // 1. Try file — but reset if bundled default has a newer revision
-  const fromFile = readLayoutFromFile();
+  const fromFile = await readLayoutFromFile();
   if (fromFile) {
     const fileRevision = (fromFile[LAYOUT_REVISION_KEY] as number) ?? 0;
     const defaultRevision = (defaultLayout?.[LAYOUT_REVISION_KEY] as number) ?? 0;
@@ -74,7 +72,7 @@ export function migrateAndLoadLayout(
       console.log(
         `[Pixel Agents] Layout revision outdated (${fileRevision} < ${defaultRevision}), resetting to bundled default`,
       );
-      writeLayoutToFile(defaultLayout!);
+      await writeLayoutToFile(defaultLayout!);
       return { layout: defaultLayout!, wasReset: true };
     }
     console.log('[Pixel Agents] Layout loaded from file');
@@ -85,7 +83,7 @@ export function migrateAndLoadLayout(
   const fromState = context.workspaceState.get<Record<string, unknown>>(WORKSPACE_KEY_LAYOUT);
   if (fromState) {
     console.log('[Pixel Agents] Migrating layout from workspace state to file');
-    writeLayoutToFile(fromState);
+    await writeLayoutToFile(fromState);
     context.workspaceState.update(WORKSPACE_KEY_LAYOUT, undefined);
     return { layout: fromState, wasReset: false };
   }
@@ -93,7 +91,7 @@ export function migrateAndLoadLayout(
   // 3. Use bundled default
   if (defaultLayout) {
     console.log('[Pixel Agents] Writing bundled default layout to file');
-    writeLayoutToFile(defaultLayout);
+    await writeLayoutToFile(defaultLayout);
     return { layout: defaultLayout, wasReset: false };
   }
 
@@ -102,8 +100,7 @@ export function migrateAndLoadLayout(
 }
 
 /**
- * Watch ~/.pixel-agents/layout.json for external changes (other VS Code windows).
- * Uses hybrid fs.watch + polling (same pattern as JSONL watching).
+ * Watch ~/.pixel-agents/layout.json for external changes (Async)
  */
 export function watchLayoutFile(
   onExternalChange: (layout: Record<string, unknown>) => void,
@@ -115,20 +112,22 @@ export function watchLayoutFile(
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
 
-  // Initialize lastMtime
-  try {
-    if (fs.existsSync(filePath)) {
-      lastMtime = fs.statSync(filePath).mtimeMs;
-    }
-  } catch {
-    /* ignore */
-  }
+  // Initialize lastMtime (Async init)
+  (async () => {
+    try {
+      const fileExists = await fs.promises.access(filePath, fs.constants.F_OK).then(() => true).catch(() => false);
+      if (fileExists) {
+        lastMtime = (await fs.promises.stat(filePath)).mtimeMs;
+      }
+    } catch { /* ignore */ }
+  })();
 
-  function checkForChange(): void {
+  async function checkForChange(): Promise<void> {
     if (disposed) return;
     try {
-      if (!fs.existsSync(filePath)) return;
-      const stat = fs.statSync(filePath);
+      const fileExists = await fs.promises.access(filePath, fs.constants.F_OK).then(() => true).catch(() => false);
+      if (!fileExists) return;
+      const stat = await fs.promises.stat(filePath);
       if (stat.mtimeMs <= lastMtime) return;
       lastMtime = stat.mtimeMs;
 
@@ -137,7 +136,7 @@ export function watchLayoutFile(
         return;
       }
 
-      const raw = fs.readFileSync(filePath, 'utf-8');
+      const raw = await fs.promises.readFile(filePath, 'utf-8');
       const layout = JSON.parse(raw) as Record<string, unknown>;
       console.log('[Pixel Agents] External layout change detected');
       onExternalChange(layout);
@@ -146,46 +145,49 @@ export function watchLayoutFile(
     }
   }
 
-  function startFsWatch(): void {
+  async function startFsWatch(): Promise<void> {
     if (disposed || fsWatcher) return;
     try {
-      if (!fs.existsSync(filePath)) return;
+      const fileExists = await fs.promises.access(filePath, fs.constants.F_OK).then(() => true).catch(() => false);
+      if (!fileExists) return;
       fsWatcher = fs.watch(filePath, () => {
         checkForChange();
       });
       fsWatcher.on('error', () => {
-        // fs.watch can be unreliable — polling backup handles it
         fsWatcher?.close();
         fsWatcher = null;
       });
-    } catch {
-      // File may not exist yet — polling will retry
-    }
+    } catch { /* ignore */ }
   }
 
-  // Start fs.watch if file exists
+  // Start watch
   startFsWatch();
 
-  // Polling backup (also starts fs.watch if file appears)
-  pollTimer = setInterval(() => {
-    if (disposed) return;
-    if (!fsWatcher) {
-      startFsWatch();
+  let isChecking = false;
+  pollTimer = setInterval(async () => {
+    if (disposed || isChecking) return;
+    isChecking = true;
+    try {
+      if (!fsWatcher) {
+        await startFsWatch();
+      }
+      await checkForChange();
+    } finally {
+      isChecking = false;
     }
-    checkForChange();
   }, LAYOUT_FILE_POLL_INTERVAL_MS);
 
   return {
     markOwnWrite(): void {
       skipNextChange = true;
-      // Update lastMtime preemptively so a near-instant poll doesn't miss the flag
-      try {
-        if (fs.existsSync(filePath)) {
-          lastMtime = fs.statSync(filePath).mtimeMs;
-        }
-      } catch {
-        /* ignore */
-      }
+      (async () => {
+        try {
+          const fileExists = await fs.promises.access(filePath, fs.constants.F_OK).then(() => true).catch(() => false);
+          if (fileExists) {
+            lastMtime = (await fs.promises.stat(filePath)).mtimeMs;
+          }
+        } catch { /* ignore */ }
+      })();
     },
     dispose(): void {
       disposed = true;

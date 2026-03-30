@@ -16,11 +16,15 @@ function getConfigFilePath(): string {
   return path.join(os.homedir(), LAYOUT_FILE_DIR, CONFIG_FILE_NAME);
 }
 
-export function readConfig(): PixelAgentsConfig {
+export async function readConfig(): Promise<PixelAgentsConfig> {
   const filePath = getConfigFilePath();
   try {
-    if (!fs.existsSync(filePath)) return { ...DEFAULT_CONFIG };
-    const raw = fs.readFileSync(filePath, 'utf-8');
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      return { ...DEFAULT_CONFIG };
+    }
+    const raw = await fs.promises.readFile(filePath, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<PixelAgentsConfig>;
     return {
       externalAssetDirectories: Array.isArray(parsed.externalAssetDirectories)
@@ -33,17 +37,19 @@ export function readConfig(): PixelAgentsConfig {
   }
 }
 
-export function writeConfig(config: PixelAgentsConfig): void {
+export async function writeConfig(config: PixelAgentsConfig): Promise<void> {
   const filePath = getConfigFilePath();
   const dir = path.dirname(filePath);
   try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      await fs.promises.access(dir);
+    } catch {
+      await fs.promises.mkdir(dir, { recursive: true });
     }
     const json = JSON.stringify(config, null, 2);
     const tmpPath = filePath + '.tmp';
-    fs.writeFileSync(tmpPath, json, 'utf-8');
-    fs.renameSync(tmpPath, filePath);
+    await fs.promises.writeFile(tmpPath, json, 'utf-8');
+    await fs.promises.rename(tmpPath, filePath);
   } catch (err) {
     console.error('[Pixel Agents] Failed to write config file:', err);
   }

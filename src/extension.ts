@@ -16,12 +16,6 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand(`${VIEW_ID}.focus`);
     }),
   );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(COMMAND_EXPORT_DEFAULT_LAYOUT, () => {
-      provider.exportDefaultLayout();
-    }),
-  );
 }
 
 export function deactivate() {
