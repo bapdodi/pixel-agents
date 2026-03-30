@@ -24,6 +24,8 @@ export interface AgentState {
   linesProcessed: number;
   /** Set of record.type values we've already warned about (prevents log spam) */
   seenUnknownRecordTypes: Set<string>;
+  /** Provider ID for this agent (e.g. 'claude', 'openai', 'gemini') */
+  providerId: string;
 }
 
 export interface PersistedAgent {
@@ -33,4 +35,6 @@ export interface PersistedAgent {
   projectDir: string;
   /** Workspace folder name (only set for multi-root workspaces) */
   folderName?: string;
+  /** Provider ID for this agent */
+  providerId: string;
 }

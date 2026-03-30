@@ -18,6 +18,12 @@ export interface SubagentCharacter {
   label: string;
 }
 
+export interface TerminalLine {
+  content: string;
+  type: 'thought' | 'shell';
+  timestamp: number;
+}
+
 export interface FurnitureAsset {
   id: string;
   name: string;
@@ -49,6 +55,7 @@ export interface WorkspaceFolder {
 export interface ExtensionMessageState {
   agents: number[];
   selectedAgent: number | null;
+  setSelectedAgent: (id: number | null) => void;
   agentTools: Record<number, ToolActivity[]>;
   agentStatuses: Record<number, string>;
   subagentTools: Record<number, Record<string, ToolActivity[]>>;
@@ -60,6 +67,7 @@ export interface ExtensionMessageState {
   externalAssetDirectories: string[];
   lastSeenVersion: string;
   extensionVersion: string;
+  agentTerminalLines: Record<number, TerminalLine[]>;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -93,6 +101,7 @@ export function useExtensionMessages(
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
   const [lastSeenVersion, setLastSeenVersion] = useState('');
   const [extensionVersion, setExtensionVersion] = useState('');
+  const [agentTerminalLines, setAgentTerminalLines] = useState<Record<number, TerminalLine[]>>({});
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -105,6 +114,7 @@ export function useExtensionMessages(
       hueShift?: number;
       seatId?: string;
       folderName?: string;
+      providerId?: string;
     }> = [];
 
     const handler = (e: MessageEvent) => {
@@ -128,7 +138,7 @@ export function useExtensionMessages(
         }
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName);
+          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true, p.folderName, p.providerId);
         }
         pendingAgents = [];
         layoutReadyRef.current = true;
@@ -142,9 +152,10 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number;
         const folderName = msg.folderName as string | undefined;
+        const providerId = msg.providerId as string | undefined;
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]));
         setSelectedAgent(id);
-        os.addAgent(id, undefined, undefined, undefined, undefined, folderName);
+        os.addAgent(id, undefined, undefined, undefined, undefined, folderName, providerId);
         saveAgentSeats(os);
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number;
@@ -176,7 +187,7 @@ export function useExtensionMessages(
         const incoming = msg.agents as number[];
         const meta = (msg.agentMeta || {}) as Record<
           number,
-          { palette?: number; hueShift?: number; seatId?: string }
+          { palette?: number; hueShift?: number; seatId?: string; providerId?: string }
         >;
         const folderNames = (msg.folderNames || {}) as Record<number, string>;
         // Buffer agents — they'll be added in layoutLoaded after seats are built
@@ -188,6 +199,7 @@ export function useExtensionMessages(
             hueShift: m?.hueShift,
             seatId: m?.seatId,
             folderName: folderNames[id],
+            providerId: m?.providerId,
           });
         }
         setAgents((prev) => {
@@ -200,6 +212,10 @@ export function useExtensionMessages(
           }
           return merged.sort((a, b) => a - b);
         });
+        // Select first agent if none selected
+        if (incoming.length > 0) {
+          setSelectedAgent((prev) => (prev === null ? incoming[0] : prev));
+        }
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number;
         const toolId = msg.toolId as string;
@@ -414,6 +430,16 @@ export function useExtensionMessages(
         } catch (err) {
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
         }
+      } else if (msg.type === 'agentTerminalText') {
+        const id = msg.id as number;
+        const content = msg.content as string;
+        const type = msg.streamType as 'thought' | 'shell';
+        setAgentTerminalLines((prev) => {
+          const list = prev[id] || [];
+          const newLine: TerminalLine = { content, type, timestamp: Date.now() };
+          const nextList = [...list, newLine].slice(-50); // Keep last 50 lines
+          return { ...prev, [id]: nextList };
+        });
       }
     };
     window.addEventListener('message', handler);
@@ -424,8 +450,10 @@ export function useExtensionMessages(
   return {
     agents,
     selectedAgent,
+    setSelectedAgent,
     agentTools,
     agentStatuses,
+    agentTerminalLines,
     subagentTools,
     subagentCharacters,
     layoutReady,

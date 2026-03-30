@@ -257,7 +257,9 @@ function adoptTerminalForFile(
     lastDataAt: 0,
     linesProcessed: 0,
     seenUnknownRecordTypes: new Set(),
+    providerId: 'claude',
   };
+
 
   agents.set(id, agent);
   activeAgentIdRef.current = id;

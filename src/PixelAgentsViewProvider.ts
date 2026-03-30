@@ -11,6 +11,7 @@ import {
   restoreAgents,
   sendExistingAgents,
   sendLayout,
+  sendTextToTerminal,
 } from './agentManager.js';
 import type { LoadedAssets } from './assetLoader.js';
 import {
@@ -99,13 +100,23 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.projectScanTimer,
           this.webview,
           this.persistAgents,
-          message.folderPath as string | undefined,
-          message.bypassPermissions as boolean | undefined,
+          {
+            providerId: (message.providerId as string) || 'claude',
+            folderPath: message.folderPath as string | undefined,
+            bypassPermissions: message.bypassPermissions as boolean | undefined,
+          },
         );
+
+      } else if (message.type === 'sendAgentCommand') {
+        const id = Number(message.id);
+        const text = message.text as string;
+        console.log(`[Pixel Agents] Webview posted command for Agent ${id}: ${text}`);
+        sendTextToTerminal(id, text, this.agents);
+
       } else if (message.type === 'focusAgent') {
         const agent = this.agents.get(message.id);
         if (agent) {
-          agent.terminalRef.show();
+          // No longer calling show() to avoid stealing focus from the UI terminal
         }
       } else if (message.type === 'closeAgent') {
         const agent = this.agents.get(message.id);
@@ -140,6 +151,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.webview,
           this.persistAgents,
         );
+        if (this.activeAgentId.current !== null) {
+          this.webview?.postMessage({ type: 'agentSelected', id: this.activeAgentId.current });
+        }
         // Send persisted settings to webview
         const soundEnabled = this.context.globalState.get<boolean>(GLOBAL_KEY_SOUND_ENABLED, true);
         const lastSeenVersion = this.context.globalState.get<string>(

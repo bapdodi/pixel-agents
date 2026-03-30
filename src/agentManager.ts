@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 
 import {
   JSONL_POLL_INTERVAL_MS,
@@ -13,46 +14,14 @@ import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatche
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import type { AgentState, PersistedAgent } from './types.js';
+import { getProvider } from './providers/index.js';
 
-export function getProjectDirPath(cwd?: string): string {
-  // Fall back to home directory when no workspace folder is open.
-  // This is the common case on Linux/macOS when VS Code is launched without a folder
-  // (e.g. `code` with no arguments). Claude Code writes JSONL files to
-  // ~/.claude/projects/<hash>/ where <hash> is derived from the process cwd, so we
-  // must use the same directory as the terminal's working directory.
-  const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
-  const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', dirName);
-  console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName}`);
 
-  // Verify the directory exists; if not, try fuzzy matching against existing dirs
-  if (!fs.existsSync(projectDir)) {
-    const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
-    try {
-      if (fs.existsSync(projectsRoot)) {
-        const candidates = fs.readdirSync(projectsRoot);
-        // Try case-insensitive match (handles Windows drive letter casing)
-        const lowerDirName = dirName.toLowerCase();
-        const match = candidates.find((c) => c.toLowerCase() === lowerDirName);
-        if (match && match !== dirName) {
-          const matchedDir = path.join(projectsRoot, match);
-          console.log(
-            `[Pixel Agents] Project dir not found, using case-insensitive match: ${dirName} → ${match}`,
-          );
-          return matchedDir;
-        }
-        if (!match) {
-          console.warn(
-            `[Pixel Agents] Project dir does not exist: ${projectDir}. ` +
-              `Available dirs (${candidates.length}): ${candidates.slice(0, 5).join(', ')}${candidates.length > 5 ? '...' : ''}`,
-          );
-        }
-      }
-    } catch {
-      // Ignore scan errors
-    }
-  }
-  return projectDir;
+/**
+ * Returns the default base directory where Claude Code stores its project session folders.
+ */
+export function getProjectDirPath(): string {
+  return path.join(os.homedir(), '.claude', 'projects');
 }
 
 export async function launchNewTerminal(
@@ -69,32 +38,36 @@ export async function launchNewTerminal(
   projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
   webview: vscode.Webview | undefined,
   persistAgents: () => void,
-  folderPath?: string,
-  bypassPermissions?: boolean,
+  options: {
+    providerId?: string;
+    folderPath?: string;
+    bypassPermissions?: boolean;
+  } = {},
 ): Promise<void> {
+  const { providerId = 'claude', folderPath, bypassPermissions } = options;
   const folders = vscode.workspace.workspaceFolders;
+
   // Use home directory as fallback cwd when no workspace is open (common on Linux/macOS).
   // This ensures the terminal starts in a predictable location that matches the project
   // dir hash Claude Code will use for JSONL transcript files.
   const cwd = folderPath || folders?.[0]?.uri.fsPath || os.homedir();
   const isMultiRoot = !!(folders && folders.length > 1);
+  const provider = getProvider(providerId);
   const idx = nextTerminalIndexRef.current++;
   const terminal = vscode.window.createTerminal({
-    name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+    name: `${provider.terminalPrefix} #${idx}`,
     cwd,
   });
   terminal.show();
 
   const sessionId = crypto.randomUUID();
-  const claudeCmd = bypassPermissions
-    ? `claude --session-id ${sessionId} --dangerously-skip-permissions`
-    : `claude --session-id ${sessionId}`;
-  terminal.sendText(claudeCmd);
+  const cmd = provider.buildCommand(sessionId, { bypassPermissions });
+  terminal.sendText(cmd);
 
-  const projectDir = getProjectDirPath(cwd);
+  const projectDir = provider.getProjectDir(cwd);
 
   // Pre-register expected JSONL file so project scan won't treat it as a /clear file
-  const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
+  const expectedFile = provider.getExpectedFile(projectDir, sessionId);
   knownJsonlFiles.add(expectedFile);
 
   // Create agent immediately (before JSONL file exists)
@@ -120,13 +93,14 @@ export async function launchNewTerminal(
     linesProcessed: 0,
     seenUnknownRecordTypes: new Set(),
     folderName,
+    providerId,
   };
 
   agents.set(id, agent);
   activeAgentIdRef.current = id;
   persistAgents();
   console.log(`[Pixel Agents] Agent ${id}: created for terminal ${terminal.name}`);
-  webview?.postMessage({ type: 'agentCreated', id, folderName });
+  webview?.postMessage({ type: 'agentCreated', id, folderName, providerId });
 
   ensureProjectScan(
     projectDir,
@@ -245,6 +219,7 @@ export function persistAgents(
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
       folderName: agent.folderName,
+      providerId: agent.providerId,
     });
   }
   context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
@@ -298,6 +273,7 @@ export function restoreAgents(
       linesProcessed: 0,
       seenUnknownRecordTypes: new Set(),
       folderName: p.folderName,
+      providerId: p.providerId,
     };
 
     agents.set(p.id, agent);
@@ -403,10 +379,18 @@ export function sendExistingAgents(
   }
   agentIds.sort((a, b) => a - b);
 
-  // Include persisted palette/seatId from separate key
-  const agentMeta = context.workspaceState.get<
-    Record<string, { palette?: number; seatId?: string }>
+  // Include persisted palette/seatId, and current providerId
+  const savedMeta = context.workspaceState.get<
+    Record<string, { palette?: number; seatId?: string; providerId?: string }>
   >(WORKSPACE_KEY_AGENT_SEATS, {});
+
+  const agentMeta: Record<string, { palette?: number; seatId?: string; providerId?: string }> = { ...savedMeta };
+
+  // Sync current providerId for all live agents
+  for (const [id, agent] of agents) {
+    if (!agentMeta[id]) agentMeta[id] = {};
+    agentMeta[id].providerId = agent.providerId;
+  }
 
   // Include folderName per agent
   const folderNames: Record<number, string> = {};
@@ -467,4 +451,24 @@ export function sendLayout(
     layout: result?.layout ?? null,
     wasReset: result?.wasReset ?? false,
   });
+}
+
+export function sendTextToTerminal(
+  agentId: number,
+  text: string,
+  agents: Map<number, AgentState>,
+): void {
+  const agent = agents.get(agentId);
+  if (!agent) {
+    console.warn(`[Pixel Agents] sendTextToTerminal: Agent ${agentId} not found in Map. Current IDs: ${Array.from(agents.keys()).join(', ')}`);
+    return;
+  }
+  
+  try {
+    const term = agent.terminalRef;
+    console.log(`[Pixel Agents] Sending command to Agent ${agentId} ("${term.name}"): ${text}`);
+    term.sendText(text);
+  } catch (err) {
+    console.error(`[Pixel Agents] Failed to send text to terminal for Agent ${agentId}:`, err);
+  }
 }

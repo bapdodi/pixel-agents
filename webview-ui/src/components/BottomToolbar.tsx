@@ -6,7 +6,7 @@ import { SettingsModal } from './SettingsModal.js';
 
 interface BottomToolbarProps {
   isEditMode: boolean;
-  onOpenClaude: () => void;
+  onOpenAgent: (providerId: string, bypassPermissions: boolean) => void;
   onToggleEditMode: () => void;
   isDebugMode: boolean;
   onToggleDebugMode: () => void;
@@ -14,6 +14,11 @@ interface BottomToolbarProps {
   onToggleAlwaysShowOverlay: () => void;
   workspaceFolders: WorkspaceFolder[];
   externalAssetDirectories: string[];
+  agents: number[];
+  selectedAgent: number | null;
+  onSelectAgent: (id: number) => void;
+  onToggleTerminal: () => void;
+  isTerminalMinimized: boolean;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -49,7 +54,7 @@ const btnActive: React.CSSProperties = {
 
 export function BottomToolbar({
   isEditMode,
-  onOpenClaude,
+  onOpenAgent,
   onToggleEditMode,
   isDebugMode,
   onToggleDebugMode,
@@ -57,38 +62,72 @@ export function BottomToolbar({
   onToggleAlwaysShowOverlay,
   workspaceFolders,
   externalAssetDirectories,
+  agents,
+  selectedAgent,
+  onSelectAgent,
+  onToggleTerminal,
+  isTerminalMinimized,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTerminalMenuOpen, setIsTerminalMenuOpen] = useState(false);
+  const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
   const [hoveredFolder, setHoveredFolder] = useState<number | null>(null);
+  const [hoveredProvider, setHoveredProvider] = useState<number | null>(null);
   const [hoveredBypass, setHoveredBypass] = useState<number | null>(null);
+  const [hoveredTerminal, setHoveredTerminal] = useState<number | null>(null);
   const folderPickerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<HTMLDivElement>(null);
   const pendingBypassRef = useRef(false);
 
-  // Close folder picker / bypass menu on outside click
+  // Close menus on outside click
   useEffect(() => {
-    if (!isFolderPickerOpen && !isBypassMenuOpen) return;
+    if (!isFolderPickerOpen && !isBypassMenuOpen && !isProviderMenuOpen && !isTerminalMenuOpen) return;
     const handleClick = (e: MouseEvent) => {
-      if (folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node)) {
+      const isOutsideAgent = folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node);
+      const isOutsideTerminal = terminalRef.current && !terminalRef.current.contains(e.target as Node);
+      if (isOutsideAgent && isOutsideTerminal) {
         setIsFolderPickerOpen(false);
         setIsBypassMenuOpen(false);
+        setIsProviderMenuOpen(false);
+        setIsTerminalMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [isFolderPickerOpen, isBypassMenuOpen]);
+  }, [isFolderPickerOpen, isBypassMenuOpen, isProviderMenuOpen, isTerminalMenuOpen]);
 
   const hasMultipleFolders = workspaceFolders.length > 1;
 
   const handleAgentClick = () => {
     setIsBypassMenuOpen(false);
-    pendingBypassRef.current = false;
-    if (hasMultipleFolders) {
-      setIsFolderPickerOpen((v) => !v);
+    setIsFolderPickerOpen(false);
+    setIsTerminalMenuOpen(false);
+    setIsProviderMenuOpen((v) => !v);
+  };
+
+  const handleTerminalBtnClick = () => {
+    if (agents.length === 0) return;
+    if (agents.length === 1) {
+      onToggleTerminal();
     } else {
-      onOpenClaude();
+      setIsTerminalMenuOpen((v) => !v);
+    }
+  };
+
+  const handleProviderSelect = (providerId: string) => {
+    setIsProviderMenuOpen(false);
+    setSelectedProvider(providerId);
+    const bypassPermissions = pendingBypassRef.current;
+    
+    if (hasMultipleFolders) {
+      setIsFolderPickerOpen(true);
+    } else {
+      pendingBypassRef.current = false;
+      onOpenAgent(providerId, bypassPermissions);
     }
   };
 
@@ -101,18 +140,16 @@ export function BottomToolbar({
   const handleFolderSelect = (folder: WorkspaceFolder) => {
     setIsFolderPickerOpen(false);
     const bypassPermissions = pendingBypassRef.current;
+    const providerId = selectedProvider || 'claude';
     pendingBypassRef.current = false;
-    vscode.postMessage({ type: 'openClaude', folderPath: folder.path, bypassPermissions });
+    setSelectedProvider(null);
+    vscode.postMessage({ type: 'openClaude', providerId, folderPath: folder.path, bypassPermissions });
   };
 
   const handleBypassSelect = (bypassPermissions: boolean) => {
     setIsBypassMenuOpen(false);
-    if (hasMultipleFolders) {
-      pendingBypassRef.current = bypassPermissions;
-      setIsFolderPickerOpen(true);
-    } else {
-      vscode.postMessage({ type: 'openClaude', bypassPermissions });
-    }
+    pendingBypassRef.current = bypassPermissions;
+    setIsProviderMenuOpen(true);
   };
 
   return (
@@ -127,7 +164,7 @@ export function BottomToolbar({
             ...btnBase,
             padding: '5px 12px',
             background:
-              hovered === 'agent' || isFolderPickerOpen || isBypassMenuOpen
+              hovered === 'agent' || isFolderPickerOpen || isBypassMenuOpen || isProviderMenuOpen
                 ? 'var(--pixel-agent-hover-bg)'
                 : 'var(--pixel-agent-bg)',
             border: '2px solid var(--pixel-agent-border)',
@@ -136,6 +173,51 @@ export function BottomToolbar({
         >
           + Agent
         </button>
+        {isProviderMenuOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              left: 0,
+              marginBottom: 4,
+              background: 'var(--pixel-bg)',
+              border: '2px solid var(--pixel-border)',
+              borderRadius: 0,
+              padding: 4,
+              boxShadow: 'var(--pixel-shadow)',
+              minWidth: 180,
+              zIndex: 'var(--pixel-controls-z)',
+            }}
+          >
+            {[
+              { id: 'claude', name: 'Claude Code' },
+              { id: 'openai', name: 'OpenAI Codex' },
+              { id: 'gemini', name: 'Google Gemini' },
+            ].map((p, i) => (
+              <button
+                key={p.id}
+                onClick={() => handleProviderSelect(p.id)}
+                onMouseEnter={() => setHoveredProvider(i)}
+                onMouseLeave={() => setHoveredProvider(null)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  fontSize: '24px',
+                  color: 'var(--pixel-text)',
+                  background: hoveredProvider === i ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                  border: 'none',
+                  borderRadius: 0,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        )}
         {isBypassMenuOpen && (
           <div
             style={{
@@ -251,6 +333,94 @@ export function BottomToolbar({
       >
         Layout
       </button>
+      <div ref={terminalRef} style={{ position: 'relative' }}>
+        <button
+          onClick={handleTerminalBtnClick}
+          onMouseEnter={() => setHovered('terminal')}
+          onMouseLeave={() => setHovered(null)}
+          style={
+            !isTerminalMinimized
+              ? { ...btnActive }
+              : {
+                  ...btnBase,
+                  background:
+                    hovered === 'terminal' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
+                }
+          }
+          title="Terminal"
+        >
+          Terminal
+        </button>
+        {isTerminalMenuOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              left: 0,
+              marginBottom: 4,
+              background: 'var(--pixel-bg)',
+              border: '2px solid var(--pixel-border)',
+              borderRadius: 0,
+              padding: 4,
+              boxShadow: 'var(--pixel-shadow)',
+              minWidth: 140,
+              zIndex: 'var(--pixel-controls-z)',
+            }}
+          >
+            {agents.map((id, i) => (
+              <button
+                key={id}
+                onClick={() => {
+                  onSelectAgent(id);
+                  setIsTerminalMenuOpen(false);
+                }}
+                onMouseEnter={() => setHoveredTerminal(i)}
+                onMouseLeave={() => setHoveredTerminal(null)}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  fontSize: '22px',
+                  color: selectedAgent === id ? 'var(--pixel-accent)' : 'var(--pixel-text)',
+                  background: hoveredTerminal === i ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                  border: 'none',
+                  borderRadius: 0,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Agent {id} {selectedAgent === id ? '●' : ''}
+              </button>
+            ))}
+            {agents.length > 0 && (
+              <>
+                <div style={{ height: 1, margin: '4px 0', background: 'var(--pixel-border)' }} />
+                <button
+                  onClick={() => {
+                    onToggleTerminal();
+                    setIsTerminalMenuOpen(false);
+                  }}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 10px',
+                    fontSize: '20px',
+                    color: 'var(--pixel-text-dim)',
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: 0,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {isTerminalMinimized ? 'Show Terminal' : 'Hide Terminal'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
       <div style={{ position: 'relative' }}>
         <button
           onClick={() => setIsSettingsOpen((v) => !v)}

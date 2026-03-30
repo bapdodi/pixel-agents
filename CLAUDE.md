@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Pixel Agents — Compressed Reference
 
 VS Code extension with embedded React webview: pixel art office where AI agents (Claude Code terminals) are animated characters.
@@ -174,9 +178,38 @@ Toggle via "Layout" button. Tools: SELECT (default), Floor paint, Wall paint, Er
 ## Build & Dev
 
 ```sh
-npm install && cd webview-ui && npm install && cd .. && npm run build
+# Initial setup
+npm install && cd webview-ui && npm install && cd ..
+
+# Build (type-check → lint → esbuild extension → vite webview)
+npm run build
+
+# Watch mode (extension + tsc in parallel)
+npm run watch
+
+# Type-check only
+npm run check-types
+
+# Lint extension backend
+npm run lint
+npm run lint:fix
+
+# Lint webview
+npm run lint:webview
+npm run lint:webview:fix
+
+# Format all files
+npm run format
+npm run format:check
+
+# Webview unit tests (Node test runner + tsx)
+cd webview-ui && npm test
+
+# E2E tests (Playwright, requires built extension)
+npm run e2e
+npm run e2e:debug
 ```
-Build: type-check → lint → esbuild (extension) → vite (webview). F5 for Extension Dev Host.
+F5 for Extension Dev Host. Build: type-check → lint → esbuild (extension) → vite (webview).
 
 ## TypeScript Constraints
 

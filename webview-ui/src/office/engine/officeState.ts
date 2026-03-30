@@ -266,6 +266,7 @@ export class OfficeState {
     preferredSeatId?: string,
     skipSpawnEffect?: boolean,
     folderName?: string,
+    providerId?: string,
   ): void {
     if (this.characters.has(id)) return;
 
@@ -296,14 +297,14 @@ export class OfficeState {
     if (seatId) {
       const seat = this.seats.get(seatId)!;
       seat.assigned = true;
-      ch = createCharacter(id, palette, seatId, seat, hueShift);
+      ch = createCharacter(id, palette, seatId, seat, hueShift, providerId);
     } else {
       // No seats — spawn at random walkable tile
       const spawn =
         this.walkableTiles.length > 0
           ? this.walkableTiles[Math.floor(Math.random() * this.walkableTiles.length)]
           : { col: 1, row: 1 };
-      ch = createCharacter(id, palette, null, null, hueShift);
+      ch = createCharacter(id, palette, null, null, hueShift, providerId);
       ch.x = spawn.col * TILE_SIZE + TILE_SIZE / 2;
       ch.y = spawn.row * TILE_SIZE + TILE_SIZE / 2;
       ch.tileCol = spawn.col;

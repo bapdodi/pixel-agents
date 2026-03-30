@@ -12,6 +12,7 @@ import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
+import TmuxTerminal from './components/TmuxTerminal.js';
 import { EditorState } from './office/editor/editorState.js';
 import { EditorToolbar } from './office/editor/EditorToolbar.js';
 import { OfficeState } from './office/engine/officeState.js';
@@ -142,9 +143,11 @@ function App() {
   const {
     agents,
     selectedAgent,
+    setSelectedAgent,
+    agentTerminalLines,
     agentTools,
-    agentStatuses,
     subagentTools,
+    agentStatuses,
     subagentCharacters,
     layoutReady,
     layoutWasReset,
@@ -180,8 +183,16 @@ function App() {
     [],
   );
 
+  const [isTerminalMinimized, setIsTerminalMinimized] = useState(false);
+
   const handleSelectAgent = useCallback((id: number) => {
+    setSelectedAgent(id);
     vscode.postMessage({ type: 'focusAgent', id });
+    setIsTerminalMinimized(false); // Auto-expand when selecting
+  }, []);
+
+  const handleToggleTerminal = useCallback(() => {
+    setIsTerminalMinimized((prev) => !prev);
   }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -209,6 +220,7 @@ function App() {
     const meta = os.subagentMeta.get(agentId);
     const focusId = meta ? meta.parentAgentId : agentId;
     vscode.postMessage({ type: 'focusAgent', id: focusId });
+    setIsTerminalMinimized(false); // Auto-expand when selecting
   }, []);
 
   const officeState = getOfficeState();
@@ -235,6 +247,14 @@ function App() {
       return false;
     })();
 
+  const handleOpenAgent = useCallback((providerId: string, bypassPermissions: boolean) => {
+    vscode.postMessage({ type: 'openClaude', providerId, bypassPermissions });
+  }, []);
+
+  const handleSendCommand = useCallback((id: number, text: string) => {
+    vscode.postMessage({ type: 'sendAgentCommand', id, text });
+  }, []);
+
   if (!layoutReady) {
     return (
       <div
@@ -251,6 +271,7 @@ function App() {
       </div>
     );
   }
+
 
   return (
     <div
@@ -283,7 +304,13 @@ function App() {
         panRef={editor.panRef}
       />
 
-      {!isDebugMode && <ZoomControls zoom={editor.zoom} onZoomChange={editor.handleZoomChange} />}
+      {!isDebugMode && (
+        <ZoomControls
+          zoom={editor.zoom}
+          onZoomChange={editor.handleZoomChange}
+          topOffset={isTerminalMinimized ? 0 : 220}
+        />
+      )}
 
       {/* Vignette overlay */}
       <div
@@ -298,7 +325,7 @@ function App() {
 
       <BottomToolbar
         isEditMode={editor.isEditMode}
-        onOpenClaude={editor.handleOpenClaude}
+        onOpenAgent={handleOpenAgent}
         onToggleEditMode={editor.handleToggleEditMode}
         isDebugMode={isDebugMode}
         onToggleDebugMode={handleToggleDebugMode}
@@ -306,6 +333,11 @@ function App() {
         onToggleAlwaysShowOverlay={handleToggleAlwaysShowOverlay}
         workspaceFolders={workspaceFolders}
         externalAssetDirectories={externalAssetDirectories}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        onSelectAgent={handleSelectAgent}
+        onToggleTerminal={handleToggleTerminal}
+        isTerminalMinimized={isTerminalMinimized}
       />
 
       <VersionIndicator
@@ -388,6 +420,19 @@ function App() {
           panRef={editor.panRef}
           onCloseAgent={handleCloseAgent}
           alwaysShowOverlay={alwaysShowOverlay}
+        />
+      )}
+
+      {!isDebugMode && (
+        <TmuxTerminal
+          agents={agents}
+          selectedAgent={selectedAgent}
+          agentTerminalLines={agentTerminalLines}
+          onSelectAgent={handleSelectAgent}
+          onSendCommand={handleSendCommand}
+          visible={true}
+          isMinimized={isTerminalMinimized}
+          onToggleMinimize={handleToggleTerminal}
         />
       )}
 
