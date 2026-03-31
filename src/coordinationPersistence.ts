@@ -11,13 +11,19 @@ import {
   COORDINATION_INBOX_DIR,
   COORDINATION_REGISTRY_FILE,
   COORDINATION_STALE_MS,
+  COORDINATION_TASKS_CLAIMED_DIR,
+  COORDINATION_TASKS_DONE_DIR,
+  COORDINATION_TASKS_FAILED_DIR,
+  COORDINATION_TASKS_PENDING_DIR,
   LAYOUT_FILE_DIR,
+  TASK_TIMEOUT_MS,
 } from './constants.js';
 import type {
   AgentRegistryEntry,
   CoordinationMessage,
   CoordinationRegistry,
   CoordLogEntry,
+  SharedTask,
 } from './types.js';
 
 // ── Path helpers ──────────────────────────────────────────────
@@ -297,4 +303,211 @@ export async function appendHistory(entry: CoordLogEntry): Promise<void> {
 
 export function getRecentHistory(): CoordLogEntry[] {
   return [...historyBuffer];
+}
+
+// ── Task I/O ──────────────────────────────────────────────────
+
+export function getTasksDir(): string {
+  return path.join(getCoordDir(), 'tasks');
+}
+
+export function getTasksPendingDir(): string {
+  return path.join(getCoordDir(), COORDINATION_TASKS_PENDING_DIR);
+}
+
+export function getTasksClaimedDir(): string {
+  return path.join(getCoordDir(), COORDINATION_TASKS_CLAIMED_DIR);
+}
+
+export function getTasksDoneDir(): string {
+  return path.join(getCoordDir(), COORDINATION_TASKS_DONE_DIR);
+}
+
+export function getTasksFailedDir(): string {
+  return path.join(getCoordDir(), COORDINATION_TASKS_FAILED_DIR);
+}
+
+export async function ensureTaskDirs(): Promise<void> {
+  for (const d of [
+    getTasksPendingDir(),
+    getTasksClaimedDir(),
+    getTasksDoneDir(),
+    getTasksFailedDir(),
+  ]) {
+    await fs.promises.mkdir(d, { recursive: true });
+  }
+}
+
+export async function createTask(task: SharedTask): Promise<void> {
+  const filePath = path.join(getTasksPendingDir(), `${task.id}.json`);
+  const tmp = filePath + '.tmp';
+  await fs.promises.writeFile(tmp, JSON.stringify(task, null, 2), 'utf-8');
+  await fs.promises.rename(tmp, filePath);
+}
+
+/** Atomic rename-based claim. Returns null if task already claimed. */
+export function claimTaskSync(taskId: string, sessionId: string): SharedTask | null {
+  const pendingPath = path.join(getTasksPendingDir(), `${taskId}.json`);
+  const claimedPath = path.join(getTasksClaimedDir(), `${taskId}.${sessionId}`);
+  try {
+    fs.renameSync(pendingPath, claimedPath);
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; // already claimed
+    throw e;
+  }
+  const task = JSON.parse(fs.readFileSync(claimedPath, 'utf-8')) as SharedTask;
+  task.status = 'in_progress';
+  task.claimedBy = sessionId;
+  task.assignedAt = Date.now();
+  task.updatedAt = Date.now();
+  const tmp = claimedPath + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(task, null, 2));
+  fs.renameSync(tmp, claimedPath);
+  return task;
+}
+
+export async function completeTask(
+  taskId: string,
+  sessionId: string,
+  result?: string,
+): Promise<void> {
+  const claimedPath = path.join(getTasksClaimedDir(), `${taskId}.${sessionId}`);
+  const donePath = path.join(getTasksDoneDir(), `${taskId}.json`);
+  try {
+    const raw = await fs.promises.readFile(claimedPath, 'utf-8');
+    const task = JSON.parse(raw) as SharedTask;
+    task.status = 'completed';
+    task.result = result;
+    task.updatedAt = Date.now();
+    const tmp = donePath + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(task, null, 2), 'utf-8');
+    await fs.promises.rename(tmp, donePath);
+    await fs.promises.unlink(claimedPath).catch(() => {
+      /* ignore */
+    });
+  } catch {
+    /* file may already be moved */
+  }
+}
+
+export async function failTask(taskId: string, sessionId: string, reason?: string): Promise<void> {
+  const claimedPath = path.join(getTasksClaimedDir(), `${taskId}.${sessionId}`);
+  const failedPath = path.join(getTasksFailedDir(), `${taskId}.json`);
+  try {
+    const raw = await fs.promises.readFile(claimedPath, 'utf-8');
+    const task = JSON.parse(raw) as SharedTask;
+    task.status = 'failed';
+    task.result = reason;
+    task.updatedAt = Date.now();
+    const tmp = failedPath + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(task, null, 2), 'utf-8');
+    await fs.promises.rename(tmp, failedPath);
+    await fs.promises.unlink(claimedPath).catch(() => {
+      /* ignore */
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Roll back all tasks claimed by sessionId → pending */
+export async function rollbackTasksForSession(sessionId: string): Promise<void> {
+  const dir = getTasksClaimedDir();
+  let files: string[] = [];
+  try {
+    files = await fs.promises.readdir(dir);
+  } catch {
+    return;
+  }
+
+  for (const file of files) {
+    if (!file.endsWith(`.${sessionId}`)) continue;
+    const taskId = file.replace(`.${sessionId}`, '');
+    const claimedPath = path.join(dir, file);
+    const pendingPath = path.join(getTasksPendingDir(), `${taskId}.json`);
+    try {
+      const raw = await fs.promises.readFile(claimedPath, 'utf-8');
+      const task = JSON.parse(raw) as SharedTask;
+      task.status = 'pending';
+      task.claimedBy = null;
+      task.assignedAt = undefined;
+      task.updatedAt = Date.now();
+      const tmp = pendingPath + '.tmp';
+      await fs.promises.writeFile(tmp, JSON.stringify(task, null, 2), 'utf-8');
+      await fs.promises.rename(tmp, pendingPath);
+      await fs.promises.unlink(claimedPath).catch(() => {
+        /* ignore */
+      });
+    } catch {
+      /* skip */
+    }
+  }
+}
+
+/** Reclaim timed-out tasks (assignedAt > TASK_TIMEOUT_MS) → pending */
+export async function recoverTimedOutTasks(): Promise<string[]> {
+  const dir = getTasksClaimedDir();
+  const recovered: string[] = [];
+  let files: string[] = [];
+  try {
+    files = await fs.promises.readdir(dir);
+  } catch {
+    return recovered;
+  }
+
+  const now = Date.now();
+  for (const file of files) {
+    const claimedPath = path.join(dir, file);
+    try {
+      const raw = await fs.promises.readFile(claimedPath, 'utf-8');
+      const task = JSON.parse(raw) as SharedTask;
+      if (task.assignedAt && now - task.assignedAt > TASK_TIMEOUT_MS) {
+        const taskId = file.split('.')[0];
+        const pendingPath = path.join(getTasksPendingDir(), `${taskId}.json`);
+        task.status = 'pending';
+        task.claimedBy = null;
+        task.assignedAt = undefined;
+        task.updatedAt = now;
+        const tmp = pendingPath + '.tmp';
+        await fs.promises.writeFile(tmp, JSON.stringify(task, null, 2), 'utf-8');
+        await fs.promises.rename(tmp, pendingPath);
+        await fs.promises.unlink(claimedPath).catch(() => {
+          /* ignore */
+        });
+        recovered.push(taskId);
+      }
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return recovered;
+}
+
+/** List all tasks across status dirs */
+export async function listAllTasks(): Promise<SharedTask[]> {
+  const dirs = [
+    { dir: getTasksPendingDir(), status: 'pending' as const },
+    { dir: getTasksClaimedDir(), status: 'in_progress' as const },
+    { dir: getTasksDoneDir(), status: 'completed' as const },
+    { dir: getTasksFailedDir(), status: 'failed' as const },
+  ];
+  const tasks: SharedTask[] = [];
+  for (const { dir } of dirs) {
+    let files: string[] = [];
+    try {
+      files = await fs.promises.readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!file.endsWith('.json') && !file.includes('.')) continue;
+      try {
+        const raw = await fs.promises.readFile(path.join(dir, file), 'utf-8');
+        tasks.push(JSON.parse(raw) as SharedTask);
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  return tasks.sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt);
 }

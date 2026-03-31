@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
+import type {
+  AgentRegistryEntry,
+  CoordLogEntry,
+  SharedTask,
+  WorkspaceFolder,
+} from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
 import { SettingsModal } from './SettingsModal.js';
+import { TaskPanel } from './TaskPanel.js';
 
 interface BottomToolbarProps {
   isEditMode: boolean;
@@ -19,6 +25,9 @@ interface BottomToolbarProps {
   onSelectAgent: (id: number) => void;
   onToggleTerminal: () => void;
   isTerminalMinimized: boolean;
+  taskList: SharedTask[];
+  coordinationRegistry: AgentRegistryEntry[];
+  coordLog: CoordLogEntry[];
 }
 
 const panelStyle: React.CSSProperties = {
@@ -67,9 +76,13 @@ export function BottomToolbar({
   onSelectAgent,
   onToggleTerminal,
   isTerminalMinimized,
+  taskList,
+  coordinationRegistry,
+  coordLog,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
   const [isTerminalMenuOpen, setIsTerminalMenuOpen] = useState(false);
   const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
@@ -85,10 +98,13 @@ export function BottomToolbar({
 
   // Close menus on outside click
   useEffect(() => {
-    if (!isFolderPickerOpen && !isBypassMenuOpen && !isProviderMenuOpen && !isTerminalMenuOpen) return;
+    if (!isFolderPickerOpen && !isBypassMenuOpen && !isProviderMenuOpen && !isTerminalMenuOpen)
+      return;
     const handleClick = (e: MouseEvent) => {
-      const isOutsideAgent = folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node);
-      const isOutsideTerminal = terminalRef.current && !terminalRef.current.contains(e.target as Node);
+      const isOutsideAgent =
+        folderPickerRef.current && !folderPickerRef.current.contains(e.target as Node);
+      const isOutsideTerminal =
+        terminalRef.current && !terminalRef.current.contains(e.target as Node);
       if (isOutsideAgent && isOutsideTerminal) {
         setIsFolderPickerOpen(false);
         setIsBypassMenuOpen(false);
@@ -122,7 +138,7 @@ export function BottomToolbar({
     setIsProviderMenuOpen(false);
     setSelectedProvider(providerId);
     const bypassPermissions = pendingBypassRef.current;
-    
+
     if (hasMultipleFolders) {
       setIsFolderPickerOpen(true);
     } else {
@@ -143,7 +159,12 @@ export function BottomToolbar({
     const providerId = selectedProvider || 'claude';
     pendingBypassRef.current = false;
     setSelectedProvider(null);
-    vscode.postMessage({ type: 'openClaude', providerId, folderPath: folder.path, bypassPermissions });
+    vscode.postMessage({
+      type: 'openClaude',
+      providerId,
+      folderPath: folder.path,
+      bypassPermissions,
+    });
   };
 
   const handleBypassSelect = (bypassPermissions: boolean) => {
@@ -424,6 +445,33 @@ export function BottomToolbar({
           )}
         </div>
       )}
+      <button
+        onClick={() => setIsTaskPanelOpen((v) => !v)}
+        onMouseEnter={() => setHovered('tasks')}
+        onMouseLeave={() => setHovered(null)}
+        style={
+          isTaskPanelOpen
+            ? { ...btnActive }
+            : {
+                ...btnBase,
+                background: hovered === 'tasks' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
+              }
+        }
+        title="Shared tasks"
+      >
+        Tasks
+        {taskList.filter((t) => t.status === 'pending').length > 0
+          ? ` (${taskList.filter((t) => t.status === 'pending').length})`
+          : ''}
+      </button>
+      {isTaskPanelOpen && (
+        <TaskPanel
+          tasks={taskList}
+          selectedAgent={selectedAgent}
+          coordinationRegistry={coordinationRegistry}
+          onClose={() => setIsTaskPanelOpen(false)}
+        />
+      )}
       <div style={{ position: 'relative' }}>
         <button
           onClick={() => setIsSettingsOpen((v) => !v)}
@@ -450,6 +498,7 @@ export function BottomToolbar({
           alwaysShowOverlay={alwaysShowOverlay}
           onToggleAlwaysShowOverlay={onToggleAlwaysShowOverlay}
           externalAssetDirectories={externalAssetDirectories}
+          coordLog={coordLog}
         />
       </div>
     </div>

@@ -157,6 +157,8 @@ function App() {
     lastSeenVersion,
     extensionVersion,
     coordinationRegistry,
+    taskList,
+    coordLog,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -334,6 +336,9 @@ function App() {
         onSelectAgent={handleSelectAgent}
         onToggleTerminal={handleToggleTerminal}
         isTerminalMinimized={isTerminalMinimized}
+        taskList={taskList}
+        coordinationRegistry={coordinationRegistry}
+        coordLog={coordLog}
       />
 
       <VersionIndicator

@@ -49,6 +49,8 @@ import type {
 import { CharacterState, TILE_SIZE, TileType } from '../types.js';
 import { getWallInstances, hasWallSprites, wallColorToHex } from '../wallTiles.js';
 import { getCharacterSprite } from './characters.js';
+import type { MessageArc } from './coordinationRenderer.js';
+import { renderCoordinationArcs } from './coordinationRenderer.js';
 import { renderMatrixEffect } from './matrixEffect.js';
 
 // ── Render functions ────────────────────────────────────────────
@@ -575,6 +577,7 @@ export function renderFrame(
   tileColors?: Array<FloorColor | null>,
   layoutCols?: number,
   layoutRows?: number,
+  coordinationArcs?: MessageArc[],
 ): { offsetX: number; offsetY: number } {
   // Clear
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -617,6 +620,19 @@ export function renderFrame(
 
   // Speech bubbles (always on top of characters)
   renderBubbles(ctx, characters, offsetX, offsetY, zoom);
+
+  // Coordination arcs (above characters, below editor overlays)
+  if (coordinationArcs && coordinationArcs.length > 0) {
+    ctx.save();
+    ctx.translate(offsetX, offsetY);
+    ctx.scale(zoom, zoom);
+    renderCoordinationArcs(ctx, coordinationArcs, (id) => {
+      const ch = characters.find((c) => c.id === id);
+      if (!ch) return null;
+      return { x: ch.x + TILE_SIZE / 2, y: ch.y + TILE_SIZE / 2 };
+    });
+    ctx.restore();
+  }
 
   // Editor overlays
   if (editor) {

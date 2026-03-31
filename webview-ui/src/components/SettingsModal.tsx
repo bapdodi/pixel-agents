@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import type { CoordLogEntry } from '../hooks/useExtensionMessages.js';
 import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js';
 import { vscode } from '../vscodeApi.js';
 
@@ -11,6 +12,7 @@ interface SettingsModalProps {
   alwaysShowOverlay: boolean;
   onToggleAlwaysShowOverlay: () => void;
   externalAssetDirectories: string[];
+  coordLog?: CoordLogEntry[];
 }
 
 const menuItemBase: React.CSSProperties = {
@@ -36,9 +38,11 @@ export function SettingsModal({
   alwaysShowOverlay,
   onToggleAlwaysShowOverlay,
   externalAssetDirectories,
+  coordLog = [],
 }: SettingsModalProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [soundLocal, setSoundLocal] = useState(isSoundEnabled);
+  const [showLog, setShowLog] = useState(false);
 
   if (!isOpen) return null;
 
@@ -290,6 +294,65 @@ export function SettingsModal({
             />
           )}
         </button>
+        <button
+          onClick={() => setShowLog((v) => !v)}
+          onMouseEnter={() => setHovered('log')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...menuItemBase,
+            background: hovered === 'log' ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+          }}
+        >
+          <span>Coordination Log</span>
+          {coordLog.length > 0 && (
+            <span style={{ fontSize: '18px', color: 'rgba(255,255,255,0.5)' }}>
+              {coordLog.length}
+            </span>
+          )}
+        </button>
+        {showLog && (
+          <div
+            style={{
+              maxHeight: 180,
+              overflowY: 'auto',
+              borderTop: '1px solid rgba(255,255,255,0.1)',
+              padding: '4px 10px',
+            }}
+          >
+            {coordLog.length === 0 ? (
+              <div style={{ fontSize: '17px', color: 'rgba(255,255,255,0.4)', padding: '6px 0' }}>
+                No events yet
+              </div>
+            ) : (
+              [...coordLog].reverse().map((entry, i) => (
+                <div
+                  key={i}
+                  style={{
+                    fontSize: '16px',
+                    color: 'rgba(255,255,255,0.6)',
+                    padding: '2px 0',
+                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <span style={{ color: 'rgba(255,255,255,0.35)', marginRight: 4 }}>
+                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span style={{ color: '#a0c4ff', marginRight: 4 }}>
+                    A{entry.fromAgentId}
+                    {entry.fromRole ? ` (${entry.fromRole})` : ''}
+                  </span>
+                  <span style={{ color: '#ffd6a5', marginRight: 4 }}>→</span>
+                  <span style={{ color: '#caffbf', marginRight: 4 }}>
+                    {entry.toAgentId !== null ? `A${entry.toAgentId}` : 'all'}
+                  </span>
+                  <span style={{ color: 'rgba(255,255,255,0.8)' }}>
+                    [{entry.msgType}] {entry.body}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
     </>
   );

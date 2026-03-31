@@ -52,6 +52,40 @@ export interface WorkspaceFolder {
   path: string;
 }
 
+export interface CoordLogEntry {
+  timestamp: number;
+  fromAgentId: number;
+  toAgentId: number | null;
+  fromRole: string | null;
+  msgType: string;
+  body: string;
+}
+
+export type SharedTaskStatus =
+  | 'pending'
+  | 'blocked'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'declined'
+  | 'timed_out';
+
+export interface SharedTask {
+  id: string;
+  title: string;
+  body: string;
+  status: SharedTaskStatus;
+  claimedBy: string | null;
+  createdBy: string;
+  dependsOn: string[];
+  requiredRole: string | null;
+  priority: number;
+  result?: string;
+  assignedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AgentRegistryEntry {
   sessionId: string;
   agentId: number;
@@ -86,6 +120,8 @@ export interface ExtensionMessageState {
   agentTerminalRawData: Record<number, string[]>;
   coordinationRegistry: AgentRegistryEntry[];
   agentRoles: Record<number, string | null>;
+  taskList: SharedTask[];
+  coordLog: CoordLogEntry[];
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -123,6 +159,8 @@ export function useExtensionMessages(
   const [agentTerminalRawData, setAgentTerminalRawData] = useState<Record<number, string[]>>({});
   const [coordinationRegistry, setCoordinationRegistry] = useState<AgentRegistryEntry[]>([]);
   const [agentRoles, setAgentRoles] = useState<Record<number, string | null>>({});
+  const [taskList, setTaskList] = useState<SharedTask[]>([]);
+  const [coordLog, setCoordLog] = useState<CoordLogEntry[]>([]);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -160,7 +198,7 @@ export function useExtensionMessages(
       if (msg.type === 'layoutLoaded') {
         console.log(
           `[Webview] 🏠 Layout loaded (revision: ${msg.layout ? (msg.layout as Record<string, unknown>).revision : 'N/A'})`,
-        );  
+        );
         // Skip external layout updates while editor has unsaved changes
         if (layoutReadyRef.current && isEditDirty?.()) {
           console.log('[Webview] Skipping external layout update — editor has unsaved changes');
@@ -509,10 +547,14 @@ export function useExtensionMessages(
             ),
           );
         } else if (sub === 'arc') {
-          // Handled by OfficeCanvas / renderer via officeState
           os.addCoordinationArc?.(msg.fromId as number, msg.toId as number, msg.arcType as string);
         } else if (sub === 'message') {
           os.showMessageBubble?.(msg.agentId as number, msg.body as string);
+        } else if (sub === 'taskList') {
+          setTaskList(msg.tasks as SharedTask[]);
+        } else if (sub === 'log') {
+          const events = msg.events as CoordLogEntry[];
+          setCoordLog((prev) => [...prev, ...events].slice(-50));
         }
       } else if (msg.type === 'agentTerminalText') {
         const id = msg.id as number;
@@ -558,5 +600,7 @@ export function useExtensionMessages(
     extensionVersion,
     coordinationRegistry,
     agentRoles,
+    taskList,
+    coordLog,
   };
 }

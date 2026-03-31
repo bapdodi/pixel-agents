@@ -59,6 +59,31 @@ export interface CoordLogEntry {
   body: string;
 }
 
+export type SharedTaskStatus =
+  | 'pending'
+  | 'blocked'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'declined'
+  | 'timed_out';
+
+export interface SharedTask {
+  id: string;
+  title: string;
+  body: string;
+  status: SharedTaskStatus;
+  claimedBy: string | null;
+  createdBy: string;
+  dependsOn: string[];
+  requiredRole: string | null;
+  priority: number; // 1 (high) – 5 (low)
+  result?: string;
+  assignedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface AgentState {
   id: number;
   terminalRef: vscode.Terminal | undefined;

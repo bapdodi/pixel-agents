@@ -1,26 +1,38 @@
+import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { COORDINATION_AGENT_POLL_MS, LAYOUT_FILE_DIR } from './constants.js';
+import { COORDINATION_AGENT_POLL_MS, LAYOUT_FILE_DIR, TASK_HEARTBEAT_MS } from './constants.js';
 import {
   appendHistory,
   appendToInbox,
   buildRoutedMessage,
+  claimTaskSync,
+  completeTask,
+  createTask,
   deleteAgentEntry,
   deleteInboxFile,
   ensureCoordDirs,
+  ensureTaskDirs,
+  failTask,
   getCoordDir,
+  listAllTasks,
   pruneStaleAgentFiles,
+  readAgentEntry,
   readNewInboxMessages,
+  recoverTimedOutTasks,
   refreshRegistry,
+  rollbackTasksForSession,
   writeAgentEntry,
 } from './coordinationPersistence.js';
+import { startInboxWatcher, stopInboxWatcher } from './coordinationWatcher.js';
 import type {
   AgentRegistryEntry,
   AgentState,
   CoordinationMessage,
   CoordLogEntry,
+  SharedTask,
 } from './types.js';
 
 // ── Module state ──────────────────────────────────────────────
@@ -28,6 +40,7 @@ import type {
 let _agents: Map<number, AgentState> | null = null;
 let _getWebview: (() => vscode.Webview | undefined) | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
+let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 // ── Init / Teardown ───────────────────────────────────────────
 
@@ -38,9 +51,15 @@ export async function initCoordination(
   _agents = agents;
   _getWebview = getWebview;
   await ensureCoordDirs();
+  await ensureTaskDirs();
 
   if (_pollTimer) clearInterval(_pollTimer);
   _pollTimer = setInterval(() => void _poll(), COORDINATION_AGENT_POLL_MS);
+
+  if (_heartbeatTimer) clearInterval(_heartbeatTimer);
+  _heartbeatTimer = setInterval(() => void _heartbeat(), TASK_HEARTBEAT_MS);
+
+  startInboxWatcher(() => void _poll());
 }
 
 export function disposeCoordination(): void {
@@ -48,6 +67,11 @@ export function disposeCoordination(): void {
     clearInterval(_pollTimer);
     _pollTimer = null;
   }
+  if (_heartbeatTimer) {
+    clearInterval(_heartbeatTimer);
+    _heartbeatTimer = null;
+  }
+  stopInboxWatcher();
 }
 
 // ── Agent registration ────────────────────────────────────────
@@ -152,10 +176,74 @@ export async function pruneStaleAgents(): Promise<void> {
   }
 }
 
-// ── Task rollback (Phase 2 placeholder) ──────────────────────
+// ── Task operations ───────────────────────────────────────────
 
-export function rollbackAgentTasks(_sessionId: string): void {
-  // Phase 2: rename claimed/<task-id>.<session> → pending/<task-id>.json
+export async function rollbackAgentTasks(sessionId: string): Promise<void> {
+  await rollbackTasksForSession(sessionId);
+  await _broadcastTaskUpdate();
+}
+
+export async function createSharedTask(
+  createdByAgentId: number,
+  title: string,
+  body: string,
+  priority = 3,
+  requiredRole: string | null = null,
+  dependsOn: string[] = [],
+): Promise<SharedTask | null> {
+  const agent = _agents?.get(createdByAgentId);
+  if (!agent?.sessionId) return null;
+
+  const task: SharedTask = {
+    id: crypto.randomUUID(),
+    title,
+    body,
+    status: 'pending',
+    claimedBy: null,
+    createdBy: agent.sessionId,
+    dependsOn,
+    requiredRole,
+    priority,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await createTask(task);
+  await _broadcastTaskUpdate();
+  return task;
+}
+
+export function claimSharedTask(agentId: number, taskId: string): SharedTask | null {
+  const agent = _agents?.get(agentId);
+  if (!agent?.sessionId) return null;
+  const task = claimTaskSync(taskId, agent.sessionId);
+  if (task) void _broadcastTaskUpdate();
+  return task;
+}
+
+export async function completeSharedTask(
+  agentId: number,
+  taskId: string,
+  result?: string,
+): Promise<void> {
+  const agent = _agents?.get(agentId);
+  if (!agent?.sessionId) return;
+  await completeTask(taskId, agent.sessionId, result);
+  await _broadcastTaskUpdate();
+}
+
+export async function failSharedTask(
+  agentId: number,
+  taskId: string,
+  reason?: string,
+): Promise<void> {
+  const agent = _agents?.get(agentId);
+  if (!agent?.sessionId) return;
+  await failTask(taskId, agent.sessionId, reason);
+  await _broadcastTaskUpdate();
+}
+
+export async function getTaskList(): Promise<SharedTask[]> {
+  return listAllTasks();
 }
 
 // ── Registry broadcast to webview ────────────────────────────
@@ -239,11 +327,33 @@ async function _poll(): Promise<void> {
   if (!_agents) return;
   await pruneStaleAgents();
 
+  const recovered = await recoverTimedOutTasks();
+  if (recovered.length > 0) {
+    await _broadcastTaskUpdate();
+  }
+
   for (const agent of _agents.values()) {
     if (agent.sessionId) {
       await processSendToMessages(agent);
     }
   }
+}
+
+async function _heartbeat(): Promise<void> {
+  if (!_agents) return;
+  const now = Date.now();
+  for (const agent of _agents.values()) {
+    if (!agent.sessionId) continue;
+    const entry = await _readEntry(agent.sessionId);
+    if (!entry) continue;
+    entry.updatedAt = now;
+    await writeAgentEntry(entry);
+  }
+}
+
+async function _broadcastTaskUpdate(): Promise<void> {
+  const tasks = await listAllTasks();
+  _postMessage({ type: 'coordination', subtype: 'taskList', tasks });
 }
 
 async function _routeSendTo(rawMsg: CoordinationMessage, fromAgent: AgentState): Promise<void> {
@@ -336,7 +446,6 @@ function _findBySession(sessionId: string): AgentState | undefined {
 }
 
 async function _readEntry(sessionId: string): Promise<AgentRegistryEntry | null> {
-  const { readAgentEntry } = await import('./coordinationPersistence.js');
   return readAgentEntry(sessionId);
 }
 

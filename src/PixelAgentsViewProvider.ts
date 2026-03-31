@@ -32,8 +32,11 @@ import {
   WORKSPACE_KEY_AGENT_SEATS,
 } from './constants.js';
 import {
+  createSharedTask,
   disposeCoordination,
+  getTaskList,
   initCoordination,
+  sendDirectMessage,
   sendRegistryToWebview,
   updateAgentRole,
 } from './coordinationManager.js';
@@ -296,12 +299,22 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           );
           await this.persistAgents();
         } else if (message.subtype === 'sendMessage') {
-          const { sendDirectMessage } = await import('./coordinationManager.js');
           await sendDirectMessage(
             Number(message.fromId),
             Number(message.toId),
             message.body as string,
           );
+        } else if (message.subtype === 'createTask') {
+          await createSharedTask(
+            Number(message.agentId),
+            message.title as string,
+            message.body as string,
+            (message.priority as number) ?? 3,
+            (message.requiredRole as string | null) ?? null,
+          );
+        } else if (message.subtype === 'requestTaskList') {
+          const tasks = await getTaskList();
+          this.webview?.postMessage({ type: 'coordination', subtype: 'taskList', tasks });
         }
       } else if (message.type === 'requestDiagnostics') {
         const diagnostics: any[] = [];

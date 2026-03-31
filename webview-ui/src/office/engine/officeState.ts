@@ -32,6 +32,8 @@ import type {
 } from '../types.js';
 import { CharacterState, Direction, MATRIX_EFFECT_DURATION, TILE_SIZE } from '../types.js';
 import { createCharacter, updateCharacter } from './characters.js';
+import type { MessageArc } from './coordinationRenderer.js';
+import { pruneArcs } from './coordinationRenderer.js';
 import { matrixEffectSeeds } from './matrixEffect.js';
 
 export class OfficeState {
@@ -48,6 +50,8 @@ export class OfficeState {
   cameraFollowId: number | null = null;
   hoveredAgentId: number | null = null;
   hoveredTile: { col: number; row: number } | null = null;
+  /** Coordination arcs for inter-agent message visualization */
+  coordinationArcs: MessageArc[] = [];
   /** Maps "parentId:toolId" → sub-agent character ID (negative) */
   subagentIdMap: Map<string, number> = new Map();
   /** Reverse lookup: sub-agent character ID → parent info */
@@ -693,19 +697,31 @@ export class OfficeState {
     }
   }
 
-  // ── Coordination stubs (Phase 2: arcs + message bubbles) ─────
+  // ── Coordination arcs ─────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  addCoordinationArc(_fromId: number, _toId: number, _arcType: string): void {
-    // Phase 2: push arc into coordinationArcs array for renderer
+  addCoordinationArc(fromId: number, toId: number, arcType: string): void {
+    this.coordinationArcs.push({
+      fromCharId: fromId,
+      toCharId: toId,
+      arcType,
+      createdAt: Date.now(),
+    });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  showMessageBubble(_agentId: number, _body: string): void {
-    // Phase 2: show transient message bubble above character
+  showMessageBubble(agentId: number, _body: string): void {
+    // Show a brief waiting-style bubble to indicate incoming message
+    const ch = this.characters.get(agentId);
+    if (ch && !ch.bubbleType) {
+      ch.bubbleType = 'waiting';
+      ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC;
+    }
   }
 
   update(dt: number): void {
+    // Prune expired coordination arcs
+    this.coordinationArcs = pruneArcs(this.coordinationArcs);
+
     // Furniture animation cycling
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);
     this.furnitureAnimTimer += dt;
