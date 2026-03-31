@@ -11,6 +11,12 @@ import {
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
 } from './constants.js';
+import {
+  buildCoordEnv,
+  deregisterAgent,
+  initCoordination,
+  registerAgent,
+} from './coordinationManager.js';
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { getProvider } from './providers/index.js';
@@ -102,72 +108,83 @@ export async function launchNewTerminal(
         `[AgentManager] 🚀 Spawning Agent ${id} PTY via ${shell} ${JSON.stringify(shellArgs)}`,
       );
 
-      const ptyInstance: AgentPty | null = spawnAgentPty(id, shell, shellArgs, cwd, (data) => {
-        const wv = getWebview();
-        const a = agents.get(id);
-        if (!a) return;
+      const coordEnv = buildCoordEnv(sessionId);
 
-        // Convert raw data to string (strip some ANSI or handle as-is)
-        const chunk = data;
-        a.lineBuffer += chunk;
+      const ptyInstance: AgentPty | null = spawnAgentPty(
+        id,
+        shell,
+        shellArgs,
+        cwd,
+        (data) => {
+          const wv = getWebview();
+          const a = agents.get(id);
+          if (!a) return;
 
-        // Dynamic Session ID Detection (e.g. for Gemini)
-        if (!a.jsonlFileResolved && provider.getSessionIdRegex) {
-          const regex = provider.getSessionIdRegex();
-          const match = a.lineBuffer.match(regex);
-          if (match) {
-            const realSessionId = match[1];
-            console.log(`[AgentManager] 🎯 Detected Session ID for Agent ${id}: ${realSessionId}`);
+          // Convert raw data to string (strip some ANSI or handle as-is)
+          const chunk = data;
+          a.lineBuffer += chunk;
 
-            // Resolve the actual file path
-            provider.getExpectedFile(a.projectDir, realSessionId).then((actualFile) => {
-              a.jsonlFile = actualFile;
-              a.jsonlFileResolved = true;
-              knownJsonlFiles.add(actualFile);
-
-              // Start polling/watching now that we have the real file
-              startGeminiPolling(
-                id,
-                agents,
-                jsonlPollTimers,
-                fileWatchers,
-                pollingTimers,
-                waitingTimers,
-                permissionTimers,
-                getWebview,
+          // Dynamic Session ID Detection (e.g. for Gemini)
+          if (!a.jsonlFileResolved && provider.getSessionIdRegex) {
+            const regex = provider.getSessionIdRegex();
+            const match = a.lineBuffer.match(regex);
+            if (match) {
+              const realSessionId = match[1];
+              console.log(
+                `[AgentManager] 🎯 Detected Session ID for Agent ${id}: ${realSessionId}`,
               );
-              persistAgents();
-            });
-          }
-        }
 
-        if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
-          const lines = a.lineBuffer.split(/\r?\n/);
-          // Keep the last partial line in the buffer
-          a.lineBuffer = lines.pop() || '';
+              // Resolve the actual file path
+              provider.getExpectedFile(a.projectDir, realSessionId).then((actualFile) => {
+                a.jsonlFile = actualFile;
+                a.jsonlFileResolved = true;
+                knownJsonlFiles.add(actualFile);
 
-          for (const line of lines) {
-            if (line.trim().length > 0) {
-              wv?.postMessage({
-                type: 'agentTerminalText',
-                id,
-                content: line.replace(
-                  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
-                  '',
-                ),
-                streamType: 'shell',
+                // Start polling/watching now that we have the real file
+                startGeminiPolling(
+                  id,
+                  agents,
+                  jsonlPollTimers,
+                  fileWatchers,
+                  pollingTimers,
+                  waitingTimers,
+                  permissionTimers,
+                  getWebview,
+                );
+                persistAgents();
               });
             }
           }
-        }
 
-        // Also keep base64 for legacy replaying if needed (optional)
-        const b64 = Buffer.from(data).toString('base64');
-        a.terminalBuffer.push(b64);
-        if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
+          if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
+            const lines = a.lineBuffer.split(/\r?\n/);
+            // Keep the last partial line in the buffer
+            a.lineBuffer = lines.pop() || '';
 
-        wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
-      });
+            for (const line of lines) {
+              if (line.trim().length > 0) {
+                wv?.postMessage({
+                  type: 'agentTerminalText',
+                  id,
+                  content: line.replace(
+                    /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+                    '',
+                  ),
+                  streamType: 'shell',
+                });
+              }
+            }
+          }
+
+          // Also keep base64 for legacy replaying if needed (optional)
+          const b64 = Buffer.from(data).toString('base64');
+          a.terminalBuffer.push(b64);
+          if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
+
+          wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
+        },
+        coordEnv,
+      );
 
       const agent: AgentState = {
         id,
@@ -193,12 +210,14 @@ export async function launchNewTerminal(
         pty: ptyInstance,
         terminalBuffer: [],
         jsonlFileResolved: !provider.getSessionIdRegex, // Immediate for Claude, deferred for Gemini
+        sessionId,
       };
 
       if (ptyInstance) ptyInstance.id = id;
       agents.set(id, agent);
       activeAgentIdRef.current = id;
       await persistAgents();
+      await registerAgent(agent);
 
       console.log(`[AgentManager] 🔵 Phase 3: Project scan and JSONL polling for Agent ${id}`);
       await ensureProjectScan(
@@ -248,6 +267,10 @@ export async function removeAgent(
   const agent = agents.get(agentId);
   if (!agent) return;
 
+  if (agent.sessionId) {
+    await deregisterAgent(agent.sessionId);
+  }
+
   const jpTimer = jsonlPollTimers.get(agentId);
   if (jpTimer) clearInterval(jpTimer);
   jsonlPollTimers.delete(agentId);
@@ -280,6 +303,9 @@ export async function persistAgents(
       projectDir: agent.projectDir,
       folderName: agent.folderName,
       providerId: agent.providerId,
+      role: agent.role,
+      roleDescription: agent.roleDescription,
+      capabilities: agent.capabilities,
     });
   }
   await context.workspaceState.update(WORKSPACE_KEY_AGENTS, persisted);
@@ -336,6 +362,9 @@ export async function restoreAgents(
       providerId: p.providerId,
       terminalBuffer: [],
       jsonlFileResolved: true, // Restored agents are always resolved
+      role: p.role,
+      roleDescription: p.roleDescription,
+      capabilities: p.capabilities,
     };
 
     agents.set(p.id, agent);

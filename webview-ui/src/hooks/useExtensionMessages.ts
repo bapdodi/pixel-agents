@@ -52,6 +52,21 @@ export interface WorkspaceFolder {
   path: string;
 }
 
+export interface AgentRegistryEntry {
+  sessionId: string;
+  agentId: number;
+  providerId: string;
+  providerName: string;
+  role: string | null;
+  roleDescription: string | null;
+  capabilities: string[];
+  status: 'active' | 'waiting' | 'idle';
+  currentTask: string | null;
+  inboxFile: string;
+  registeredAt: number;
+  updatedAt: number;
+}
+
 export interface ExtensionMessageState {
   agents: number[];
   selectedAgent: number | null;
@@ -69,6 +84,8 @@ export interface ExtensionMessageState {
   extensionVersion: string;
   agentTerminalLines: Record<number, TerminalLine[]>;
   agentTerminalRawData: Record<number, string[]>;
+  coordinationRegistry: AgentRegistryEntry[];
+  agentRoles: Record<number, string | null>;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -104,6 +121,8 @@ export function useExtensionMessages(
   const [extensionVersion, setExtensionVersion] = useState('');
   const [agentTerminalLines, setAgentTerminalLines] = useState<Record<number, TerminalLine[]>>({});
   const [agentTerminalRawData, setAgentTerminalRawData] = useState<Record<number, string[]>>({});
+  const [coordinationRegistry, setCoordinationRegistry] = useState<AgentRegistryEntry[]>([]);
+  const [agentRoles, setAgentRoles] = useState<Record<number, string | null>>({});
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -120,11 +139,13 @@ export function useExtensionMessages(
     }> = [];
 
     // Report any early errors captured during bootstrap
-    const pendingErrors = (window as any).__pixelAgentsPendingErrors as any[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pendingErrors = (window as any).__pixelAgentsPendingErrors as unknown[];
     if (pendingErrors && pendingErrors.length > 0) {
       for (const e of pendingErrors) {
         vscode.postMessage({ type: 'webviewError', error: e });
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).__pixelAgentsPendingErrors = [];
     }
 
@@ -137,7 +158,9 @@ export function useExtensionMessages(
       }
 
       if (msg.type === 'layoutLoaded') {
-        console.log(`[Webview] 🏠 Layout loaded (revision: ${msg.layout ? (msg.layout as any).revision : 'N/A'})`);
+        console.log(
+          `[Webview] 🏠 Layout loaded (revision: ${msg.layout ? (msg.layout as Record<string, unknown>).revision : 'N/A'})`,
+        );  
         // Skip external layout updates while editor has unsaved changes
         if (layoutReadyRef.current && isEditDirty?.()) {
           console.log('[Webview] Skipping external layout update — editor has unsaved changes');
@@ -458,6 +481,39 @@ export function useExtensionMessages(
         } catch (err) {
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err);
         }
+      } else if (msg.type === 'coordination') {
+        const sub = msg.subtype as string;
+        if (sub === 'registry') {
+          const entries = msg.agents as AgentRegistryEntry[];
+          setCoordinationRegistry(entries);
+          // Sync roles into agentRoles map
+          const roles: Record<number, string | null> = {};
+          for (const entry of entries) {
+            roles[entry.agentId] = entry.role;
+          }
+          setAgentRoles(roles);
+        } else if (sub === 'roleUpdated') {
+          const agentId = msg.agentId as number;
+          const role = (msg.role as string | null) ?? null;
+          setAgentRoles((prev) => ({ ...prev, [agentId]: role }));
+          setCoordinationRegistry((prev) =>
+            prev.map((e) =>
+              e.agentId === agentId
+                ? {
+                    ...e,
+                    role,
+                    roleDescription: (msg.roleDescription as string | null) ?? null,
+                    capabilities: (msg.capabilities as string[]) ?? [],
+                  }
+                : e,
+            ),
+          );
+        } else if (sub === 'arc') {
+          // Handled by OfficeCanvas / renderer via officeState
+          os.addCoordinationArc?.(msg.fromId as number, msg.toId as number, msg.arcType as string);
+        } else if (sub === 'message') {
+          os.showMessageBubble?.(msg.agentId as number, msg.body as string);
+        }
       } else if (msg.type === 'agentTerminalText') {
         const id = msg.id as number;
         const content = msg.content as string;
@@ -500,5 +556,7 @@ export function useExtensionMessages(
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,
+    coordinationRegistry,
+    agentRoles,
   };
 }

@@ -16,7 +16,7 @@ function getPtyOutputChannel(): { appendLine: (msg: string) => void } {
   return {
     appendLine: (msg: string) => {
       console.log(`[PTY Output] ${msg}`);
-    }
+    },
   };
 }
 
@@ -35,7 +35,6 @@ function loadPty(): typeof ptyTypes | null {
     return null;
   }
   try {
-     
     ptyModule = require('node-pty') as typeof ptyTypes;
     console.log('[PTY] node-pty loaded successfully via require');
     getPtyOutputChannel().appendLine('[PTY] node-pty loaded successfully');
@@ -54,10 +53,13 @@ export function spawnAgentPty(
   args: string[],
   cwd: string,
   onData: (data: string) => void,
+  customEnv?: Record<string, string>,
 ): AgentPty | null {
   const pty = loadPty();
   if (!pty) {
-    getPtyOutputChannel().appendLine(`[Agent ${id}] Cannot spawn PTY: node-pty unavailable (${ptyLoadError})`);
+    getPtyOutputChannel().appendLine(
+      `[Agent ${id}] Cannot spawn PTY: node-pty unavailable (${ptyLoadError})`,
+    );
     return null;
   }
 
@@ -73,6 +75,7 @@ export function spawnAgentPty(
     LANG: 'en_US.UTF-8',
     LC_ALL: 'en_US.UTF-8',
     VSCODE_TERMINAL: '1',
+    ...customEnv,
   };
 
   let ptyProcess: ptyTypes.IPty;
@@ -80,9 +83,9 @@ export function spawnAgentPty(
     const outChannel = getPtyOutputChannel();
     outChannel.appendLine(`[Agent ${id}] Spawning PTY: ${command} ${JSON.stringify(args)}`);
     console.log(`[PTY] Spawning: ${command} ${JSON.stringify(args)} (cwd: ${cwd})`);
-    
+
     const isWin = os.platform() === 'win32';
-    
+
     ptyProcess = pty.spawn(command, args, {
       name: 'xterm-256color',
       cols: 80,
@@ -104,17 +107,21 @@ export function spawnAgentPty(
     ptyProcess,
     onData,
     dispose: () => {
-      try { 
+      try {
         console.log(`[PTY] Killing process ${ptyProcess.pid} for Agent ${id}`);
-        ptyProcess.kill(); 
-      } catch { /* ignore */ }
+        ptyProcess.kill();
+      } catch {
+        /* ignore */
+      }
       ptyInstances.delete(id);
     },
   };
 
   ptyProcess.onData((data: string) => {
     if (data.length > 0) {
-      console.log(`[PTY] Agent ${id} RECEIVED ${data.length} bytes: ${JSON.stringify(data.substring(0, 50))}...`);
+      console.log(
+        `[PTY] Agent ${id} RECEIVED ${data.length} bytes: ${JSON.stringify(data.substring(0, 50))}...`,
+      );
     }
     onData(data);
   });

@@ -693,6 +693,18 @@ export class OfficeState {
     }
   }
 
+  // ── Coordination stubs (Phase 2: arcs + message bubbles) ─────
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  addCoordinationArc(_fromId: number, _toId: number, _arcType: string): void {
+    // Phase 2: push arc into coordinationArcs array for renderer
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  showMessageBubble(_agentId: number, _body: string): void {
+    // Phase 2: show transient message bubble above character
+  }
+
   update(dt: number): void {
     // Furniture animation cycling
     const prevFrame = Math.floor(this.furnitureAnimTimer / FURNITURE_ANIM_INTERVAL_SEC);

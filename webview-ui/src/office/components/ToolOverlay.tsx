@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
+import { RoleSelector } from '../../components/RoleSelector.js';
 import { CHARACTER_SITTING_OFFSET_PX, TOOL_OVERLAY_VERTICAL_OFFSET } from '../../constants.js';
-import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
+import type { AgentRegistryEntry, SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
 import type { ToolActivity } from '../types.js';
 import { CharacterState, TILE_SIZE } from '../types.js';
@@ -16,6 +17,8 @@ interface ToolOverlayProps {
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
   alwaysShowOverlay: boolean;
+  coordinationRegistry?: AgentRegistryEntry[];
+  onSendMessage?: (fromId: number) => void;
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -52,8 +55,11 @@ export function ToolOverlay({
   panRef,
   onCloseAgent,
   alwaysShowOverlay,
+  coordinationRegistry = [],
+  onSendMessage,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
+  const [roleSelectorFor, setRoleSelectorFor] = useState<number | null>(null);
   useEffect(() => {
     let rafId = 0;
     const tick = () => {
@@ -102,6 +108,9 @@ export function ToolOverlay({
           (deviceOffsetY + (ch.y + sittingOffset - TOOL_OVERLAY_VERTICAL_OFFSET) * zoom) / dpr;
 
         // Get activity text
+        const regEntry = coordinationRegistry.find((e) => e.agentId === id);
+        const agentRole = regEntry?.role ?? null;
+
         const subHasPermission = isSub && ch.bubbleType === 'permission';
         let activityText: string;
         if (isSub) {
@@ -220,6 +229,21 @@ export function ToolOverlay({
                   </span>
                 )}
               </div>
+              {!isSub && agentRole && (
+                <span
+                  style={{
+                    fontSize: '15px',
+                    color: 'var(--pixel-accent)',
+                    fontWeight: 'bold',
+                    display: 'block',
+                    letterSpacing: '0.3px',
+                    lineHeight: 1,
+                    marginTop: 2,
+                  }}
+                >
+                  {agentRole}
+                </span>
+              )}
               {isSelected && !isSub && (
                 <button
                   onClick={(e) => {
@@ -249,9 +273,64 @@ export function ToolOverlay({
                 </button>
               )}
             </div>
+            {isSelected && !isSub && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 4,
+                  marginTop: 3,
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSendMessage?.(id);
+                  }}
+                  title="Send message"
+                  style={{
+                    background: 'var(--pixel-bg)',
+                    border: '2px solid var(--pixel-border)',
+                    borderRadius: 0,
+                    color: 'var(--pixel-text)',
+                    cursor: 'pointer',
+                    padding: '2px 7px',
+                    fontSize: '18px',
+                    boxShadow: '2px 2px 0px #0a0a14',
+                  }}
+                >
+                  ✉
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRoleSelectorFor(id);
+                  }}
+                  title="Set role"
+                  style={{
+                    background: 'var(--pixel-bg)',
+                    border: '2px solid var(--pixel-border)',
+                    borderRadius: 0,
+                    color: agentRole ? 'var(--pixel-accent)' : 'var(--pixel-text-dim)',
+                    cursor: 'pointer',
+                    padding: '2px 7px',
+                    fontSize: '18px',
+                    boxShadow: '2px 2px 0px #0a0a14',
+                  }}
+                >
+                  🏷
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
+      {roleSelectorFor !== null && (
+        <RoleSelector
+          agentId={roleSelectorFor}
+          entry={coordinationRegistry.find((e) => e.agentId === roleSelectorFor)}
+          onClose={() => setRoleSelectorFor(null)}
+        />
+      )}
     </>
   );
 }

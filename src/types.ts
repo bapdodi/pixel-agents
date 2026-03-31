@@ -2,6 +2,63 @@ import type * as vscode from 'vscode';
 
 import type { AgentPty } from './ptyManager.js';
 
+// ── A2A Coordination Types ────────────────────────────────────
+
+export interface AgentRegistryEntry {
+  sessionId: string;
+  agentId: number;
+  providerId: string;
+  providerName: string;
+  role: string | null;
+  roleDescription: string | null;
+  capabilities: string[];
+  status: 'active' | 'waiting' | 'idle';
+  currentTask: string | null;
+  inboxFile: string;
+  registeredAt: number;
+  updatedAt: number;
+}
+
+export interface CoordinationRegistry {
+  version: 1;
+  agents: Record<string, AgentRegistryEntry>;
+  updatedAt: number;
+}
+
+export type CoordinationMessageType =
+  | 'message'
+  | 'delegate'
+  | 'result'
+  | 'broadcast'
+  | 'send_to'
+  | 'set_role'
+  | 'decline'
+  | 'ack';
+
+export interface CoordinationMessage {
+  id: string;
+  fromSessionId: string;
+  fromProviderId: string;
+  fromRole: string | null;
+  toSessionId: string;
+  type: CoordinationMessageType;
+  body: string;
+  taskId?: string;
+  chainDepth?: number;
+  rootMessageId?: string;
+  sentAt: number;
+  ttl?: number;
+}
+
+export interface CoordLogEntry {
+  timestamp: number;
+  fromAgentId: number;
+  toAgentId: number | null;
+  fromRole: string | null;
+  msgType: CoordinationMessageType;
+  body: string;
+}
+
 export interface AgentState {
   id: number;
   terminalRef: vscode.Terminal | undefined;
@@ -34,6 +91,16 @@ export interface AgentState {
   terminalBuffer: string[];
   /** Whether the JSONL file path has been resolved (true for Claude, deferred for Gemini) */
   jsonlFileResolved: boolean;
+  /** A2A: session UUID derived from jsonlFile basename */
+  sessionId?: string;
+  /** A2A: assigned role */
+  role?: string;
+  /** A2A: role description */
+  roleDescription?: string;
+  /** A2A: capability tags */
+  capabilities?: string[];
+  /** A2A: inbox file path */
+  coordinationInboxFile?: string;
 }
 
 export interface PersistedAgent {
@@ -45,4 +112,10 @@ export interface PersistedAgent {
   folderName?: string;
   /** Provider ID for this agent */
   providerId: string;
+  /** A2A: assigned role */
+  role?: string;
+  /** A2A: role description */
+  roleDescription?: string;
+  /** A2A: capability tags */
+  capabilities?: string[];
 }

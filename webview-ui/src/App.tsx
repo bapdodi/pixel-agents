@@ -156,6 +156,7 @@ function App() {
     externalAssetDirectories,
     lastSeenVersion,
     extensionVersion,
+    coordinationRegistry,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -415,6 +416,7 @@ function App() {
           panRef={editor.panRef}
           onCloseAgent={handleCloseAgent}
           alwaysShowOverlay={alwaysShowOverlay}
+          coordinationRegistry={coordinationRegistry}
         />
       )}
 

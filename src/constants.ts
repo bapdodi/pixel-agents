@@ -21,6 +21,44 @@ export const LAYOUT_REVISION_KEY = 'layoutRevision';
 export const GLOBAL_KEY_SOUND_ENABLED = 'pixel-agents.soundEnabled';
 export const GLOBAL_KEY_LAST_SEEN_VERSION = 'pixel-agents.lastSeenVersion';
 
+// ── A2A Coordination ────────────────────────────────────────
+export const COORDINATION_DIR = 'coordination';
+export const COORDINATION_AGENTS_DIR = 'agents';
+export const COORDINATION_INBOX_DIR = 'inbox';
+export const COORDINATION_REGISTRY_FILE = 'registry.json';
+export const COORDINATION_HISTORY_FILE = 'history.jsonl';
+export const COORDINATION_AGENT_POLL_MS = 2_000;
+export const COORDINATION_STALE_MS = 30_000;
+export const COORDINATION_LINK_TTL_MS = 10_000;
+export const TASK_TIMEOUT_MS = 120_000;
+export const TASK_HEARTBEAT_MS = 30_000;
+export const MAX_CHAIN_DEPTH = 5;
+export const MAX_INLINE_BODY_BYTES = 4_096;
+export const DEFAULT_MESSAGE_TTL_MS = 86_400_000;
+export const COORD_HISTORY_MAX = 50;
+export const AGENT_ROLE_PRESETS = [
+  'Architect',
+  'Frontend Dev',
+  'Backend Dev',
+  'QA Engineer',
+  'Tech Writer',
+  'Code Reviewer',
+  'DevOps',
+  'Data Analyst',
+] as const;
+export const CAPABILITY_PRESETS = {
+  'code-review': '코드 리뷰 및 품질 검증',
+  testing: '테스트 작성 및 실행',
+  documentation: '문서화 및 주석 작성',
+  architecture: '시스템 설계 및 아키텍처',
+  frontend: 'UI/UX 구현',
+  backend: 'API 및 서버 구현',
+  database: 'DB 스키마 및 쿼리',
+  devops: 'CI/CD 및 인프라',
+  security: '보안 취약점 분석',
+  performance: '성능 최적화',
+} as const;
+
 // ── VS Code Identifiers ─────────────────────────────────────
 export const VIEW_ID = 'pixel-agents.panelView';
 export const COMMAND_SHOW_PANEL = 'pixel-agents.showPanel';

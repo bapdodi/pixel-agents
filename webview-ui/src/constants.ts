@@ -103,6 +103,18 @@ export const FURNITURE_ANIM_INTERVAL_SEC = 0.2;
 export const WHATS_NEW_AUTO_CLOSE_MS = 20000;
 export const WHATS_NEW_FADE_MS = 1000;
 
+// ── A2A Coordination ─────────────────────────────────────────
+export const AGENT_ROLE_PRESETS = [
+  'Architect',
+  'Frontend Dev',
+  'Backend Dev',
+  'QA Engineer',
+  'Tech Writer',
+  'Code Reviewer',
+  'DevOps',
+  'Data Analyst',
+] as const;
+
 // ── Game Logic ───────────────────────────────────────────────
 export const MAX_DELTA_TIME_SEC = 0.1;
 export const WAITING_BUBBLE_DURATION_SEC = 2.0;
