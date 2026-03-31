@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+
 import type { TerminalLine } from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
 
@@ -150,17 +151,17 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         onClick={(e) => onToggleMinimize(e)}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: agents.length > 0 ? '#4caf50' : '#f44336',
-          }} />
+          <div
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: agents.length > 0 ? '#4caf50' : '#f44336',
+            }}
+          />
           TERMINAL SYSTEM: {isMinimized ? 'MINIMIZED' : 'ONLINE'}
         </div>
-        <div style={{ opacity: 0.8 }}>
-          {isMinimized ? 'CLICK TO EXPAND ▴' : 'CLICK TO HIDE ▾'}
-        </div>
+        <div style={{ opacity: 0.8 }}>{isMinimized ? 'CLICK TO EXPAND ▴' : 'CLICK TO HIDE ▾'}</div>
       </div>
 
       {/* Terminal Content (DOM rendered) */}
@@ -243,7 +244,7 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         }}
       >
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          {agents.map((id, index) => {
+          {agents.map((id) => {
             const isActive = selectedAgent === id;
             return (
               <div

@@ -148,7 +148,6 @@ function App() {
     subagentTools,
     agentStatuses,
     agentTerminalLines,
-    agentTerminalRawData,
     subagentCharacters,
     layoutReady,
     layoutWasReset,
@@ -252,7 +251,6 @@ function App() {
     vscode.postMessage({ type: 'openClaude', providerId, bypassPermissions });
   }, []);
 
-
   if (!layoutReady) {
     return (
       <div
@@ -269,7 +267,6 @@ function App() {
       </div>
     );
   }
-
 
   return (
     <div
@@ -426,7 +423,6 @@ function App() {
           agents={agents}
           selectedAgent={selectedAgent}
           agentTerminalLines={agentTerminalLines}
-          agentTerminalRawData={agentTerminalRawData}
           onSelectAgent={handleSelectAgent}
           visible={true}
           isMinimized={isTerminalMinimized}

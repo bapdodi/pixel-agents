@@ -15,7 +15,7 @@ import {
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { getProvider } from './providers/index.js';
-import { type AgentPty,spawnAgentPty } from './ptyManager.js';
+import { type AgentPty, spawnAgentPty } from './ptyManager.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import type { AgentState, PersistedAgent } from './types.js';
 const execAsync = promisify(exec);
@@ -75,11 +75,11 @@ export async function launchNewTerminal(
   const folders = vscode.workspace.workspaceFolders;
   const provider = getProvider(providerId);
   const id = nextAgentIdRef.current++;
-  
+
   // Phase 1: Notify UI immediately to prevent "WAITING FOR AGENT CONNECTION" hang
   const cwd = folderPath || folders?.[0]?.uri.fsPath || os.homedir();
   const folderName = folders && folders.length > 1 && cwd ? path.basename(cwd) : undefined;
-  
+
   console.log(`[AgentManager] 🟢 Phase 1: Notifying UI for Agent ${id}`);
   getWebview()?.postMessage({ type: 'agentCreated', id, folderName, providerId });
 
@@ -95,51 +95,50 @@ export async function launchNewTerminal(
       knownJsonlFiles.add(expectedFile);
 
       const isWin = os.platform() === 'win32';
-      const shell = isWin ? (process.env.ComSpec || 'cmd.exe') : 'bash';
+      const shell = isWin ? process.env.ComSpec || 'cmd.exe' : 'bash';
       // Pass the resolved command as a single argument to /c; node-pty handles quoting if spaces are present
       const shellArgs = isWin ? ['/c', resolvedCmd] : ['-c', resolvedCmd];
-      
-      console.log(`[AgentManager] 🚀 Spawning Agent ${id} PTY via ${shell} ${JSON.stringify(shellArgs)}`);
 
-      const ptyInstance: AgentPty | null = spawnAgentPty(
-        id,
-        shell,
-        shellArgs,
-        cwd,
-        (data) => {
-          const wv = getWebview();
-          const a = agents.get(id);
-          if (!a) return;
+      console.log(
+        `[AgentManager] 🚀 Spawning Agent ${id} PTY via ${shell} ${JSON.stringify(shellArgs)}`,
+      );
 
-          // Convert raw data to string (strip some ANSI or handle as-is)
-          const chunk = data.toString('utf8');
-          a.lineBuffer += chunk;
-          
-          if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
-            const lines = a.lineBuffer.split(/\r?\n/);
-            // Keep the last partial line in the buffer
-            a.lineBuffer = lines.pop() || '';
-            
-            for (const line of lines) {
-              if (line.trim().length > 0) {
-                wv?.postMessage({ 
-                  type: 'agentTerminalText', 
-                  id, 
-                  content: line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, ''), 
-                  streamType: 'shell' 
-                });
-              }
+      const ptyInstance: AgentPty | null = spawnAgentPty(id, shell, shellArgs, cwd, (data) => {
+        const wv = getWebview();
+        const a = agents.get(id);
+        if (!a) return;
+
+        // Convert raw data to string (strip some ANSI or handle as-is)
+        const chunk = data;
+        a.lineBuffer += chunk;
+
+        if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
+          const lines = a.lineBuffer.split(/\r?\n/);
+          // Keep the last partial line in the buffer
+          a.lineBuffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.trim().length > 0) {
+              wv?.postMessage({
+                type: 'agentTerminalText',
+                id,
+                content: line.replace(
+                  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+                  '',
+                ),
+                streamType: 'shell',
+              });
             }
           }
+        }
 
-          // Also keep base64 for legacy replaying if needed (optional)
-          const b64 = Buffer.from(data).toString('base64');
-          a.terminalBuffer.push(b64);
-          if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
-          
-          wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
-        },
-      );
+        // Also keep base64 for legacy replaying if needed (optional)
+        const b64 = Buffer.from(data).toString('base64');
+        a.terminalBuffer.push(b64);
+        if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
+
+        wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
+      });
 
       const agent: AgentState = {
         id,
@@ -192,19 +191,34 @@ export async function launchNewTerminal(
       const pollTimer = setInterval(async () => {
         pollCount++;
         try {
-          const exists = await fs.promises.access(agent.jsonlFile, fs.constants.F_OK).then(() => true).catch(() => false);
+          const exists = await fs.promises
+            .access(agent.jsonlFile, fs.constants.F_OK)
+            .then(() => true)
+            .catch(() => false);
           if (exists) {
             clearInterval(pollTimer);
             jsonlPollTimers.delete(id);
-            startFileWatching(id, agent.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, getWebview);
+            startFileWatching(
+              id,
+              agent.jsonlFile,
+              agents,
+              fileWatchers,
+              pollingTimers,
+              waitingTimers,
+              permissionTimers,
+              getWebview,
+            );
             await readNewLines(id, agents, waitingTimers, permissionTimers, getWebview);
           } else if (pollCount === 20) {
-            console.warn(`[AgentManager] Agent ${id}: Timeout waiting for JSONL at ${path.basename(agent.jsonlFile)}`);
+            console.warn(
+              `[AgentManager] Agent ${id}: Timeout waiting for JSONL at ${path.basename(agent.jsonlFile)}`,
+            );
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }, JSONL_POLL_INTERVAL_MS);
       jsonlPollTimers.set(id, pollTimer);
-
     } catch (err) {
       console.error(`[AgentManager] ❌ CRITICAL: Failed to build Agent ${id}:`, err);
     }
@@ -230,7 +244,7 @@ export async function removeAgent(
 
   fileWatchers.get(agentId)?.close();
   fileWatchers.delete(agentId);
-  
+
   const pt = pollingTimers.get(agentId);
   if (pt) clearInterval(pt);
   pollingTimers.delete(agentId);
@@ -326,25 +340,51 @@ export async function restoreAgents(
     restoredProjectDir = p.projectDir;
 
     try {
-      const fileExists = await fs.promises.access(p.jsonlFile, fs.constants.F_OK).then(() => true).catch(() => false);
+      const fileExists = await fs.promises
+        .access(p.jsonlFile, fs.constants.F_OK)
+        .then(() => true)
+        .catch(() => false);
       if (fileExists) {
         const stat = await fs.promises.stat(p.jsonlFile);
         agent.fileOffset = stat.size;
-        startFileWatching(p.id, p.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, getWebview);
+        startFileWatching(
+          p.id,
+          p.jsonlFile,
+          agents,
+          fileWatchers,
+          pollingTimers,
+          waitingTimers,
+          permissionTimers,
+          getWebview,
+        );
       } else {
         const pollTimer = setInterval(async () => {
-          const exists = await fs.promises.access(agent.jsonlFile, fs.constants.F_OK).then(() => true).catch(() => false);
+          const exists = await fs.promises
+            .access(agent.jsonlFile, fs.constants.F_OK)
+            .then(() => true)
+            .catch(() => false);
           if (exists) {
             clearInterval(pollTimer);
             jsonlPollTimers.delete(p.id);
             const stat = await fs.promises.stat(agent.jsonlFile);
             agent.fileOffset = stat.size;
-            startFileWatching(p.id, agent.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, getWebview);
+            startFileWatching(
+              p.id,
+              agent.jsonlFile,
+              agents,
+              fileWatchers,
+              pollingTimers,
+              waitingTimers,
+              permissionTimers,
+              getWebview,
+            );
           }
         }, JSONL_POLL_INTERVAL_MS);
         jsonlPollTimers.set(p.id, pollTimer);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   if (maxId >= nextAgentIdRef.current) nextAgentIdRef.current = maxId + 1;
@@ -436,7 +476,7 @@ export function sendTextToTerminal(
 ): void {
   const agent = agents.get(agentId);
   if (!agent) return;
-  
+
   try {
     if (agent.terminalRef) {
       agent.terminalRef.sendText(text);
