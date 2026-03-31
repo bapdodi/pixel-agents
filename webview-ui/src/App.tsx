@@ -159,6 +159,7 @@ function App() {
     coordinationRegistry,
     taskList,
     coordLog,
+    systemNotification,
   } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty);
 
   // Show migration notice once layout reset is detected
@@ -250,9 +251,27 @@ function App() {
       return false;
     })();
 
-  const handleOpenAgent = useCallback((providerId: string, bypassPermissions: boolean) => {
-    vscode.postMessage({ type: 'openClaude', providerId, bypassPermissions });
-  }, []);
+  const handleOpenAgent = useCallback(
+    (
+      providerId: string,
+      bypassPermissions: boolean,
+      folderPath?: string,
+      role?: string,
+      roleDescription?: string,
+      capabilities?: string[],
+    ) => {
+      vscode.postMessage({
+        type: 'openClaude',
+        providerId,
+        bypassPermissions,
+        folderPath,
+        role,
+        roleDescription,
+        capabilities,
+      });
+    },
+    [],
+  );
 
   if (!layoutReady) {
     return (
@@ -320,6 +339,36 @@ function App() {
           zIndex: 40,
         }}
       />
+
+      {/* System Notifications (Toasts) */}
+      {systemNotification && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 80,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1000,
+            pointerEvents: 'none',
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--pixel-bg)',
+              border: '2px solid var(--pixel-accent)',
+              boxShadow: '4px 4px 0px #0a0a14',
+              color: 'var(--pixel-text)',
+              padding: '8px 16px',
+              fontSize: '20px',
+              fontWeight: 'bold',
+              whiteSpace: 'nowrap',
+              animation: 'pixel-agents-pulse 0.5s ease-in-out infinite alternate',
+            }}
+          >
+            {systemNotification}
+          </div>
+        </div>
+      )}
 
       <BottomToolbar
         isEditMode={editor.isEditMode}

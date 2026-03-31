@@ -6,13 +6,20 @@ import type {
   SharedTask,
   WorkspaceFolder,
 } from '../hooks/useExtensionMessages.js';
-import { vscode } from '../vscodeApi.js';
+import { RoleSelector } from './RoleSelector.js';
 import { SettingsModal } from './SettingsModal.js';
 import { TaskPanel } from './TaskPanel.js';
 
 interface BottomToolbarProps {
   isEditMode: boolean;
-  onOpenAgent: (providerId: string, bypassPermissions: boolean) => void;
+  onOpenAgent: (
+    providerId: string,
+    bypassPermissions: boolean,
+    folderPath?: string,
+    role?: string,
+    roleDescription?: string,
+    capabilities?: string[],
+  ) => void;
   onToggleEditMode: () => void;
   isDebugMode: boolean;
   onToggleDebugMode: () => void;
@@ -87,7 +94,9 @@ export function BottomToolbar({
   const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isBypassMenuOpen, setIsBypassMenuOpen] = useState(false);
+  const [isRolePickerOpen, setIsRolePickerOpen] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<string | undefined>(undefined);
   const [hoveredFolder, setHoveredFolder] = useState<number | null>(null);
   const [hoveredProvider, setHoveredProvider] = useState<number | null>(null);
   const [hoveredBypass, setHoveredBypass] = useState<number | null>(null);
@@ -137,13 +146,11 @@ export function BottomToolbar({
   const handleProviderSelect = (providerId: string) => {
     setIsProviderMenuOpen(false);
     setSelectedProvider(providerId);
-    const bypassPermissions = pendingBypassRef.current;
 
     if (hasMultipleFolders) {
       setIsFolderPickerOpen(true);
     } else {
-      pendingBypassRef.current = false;
-      onOpenAgent(providerId, bypassPermissions);
+      setIsRolePickerOpen(true);
     }
   };
 
@@ -155,16 +162,22 @@ export function BottomToolbar({
 
   const handleFolderSelect = (folder: WorkspaceFolder) => {
     setIsFolderPickerOpen(false);
-    const bypassPermissions = pendingBypassRef.current;
+    setSelectedFolder(folder.path);
+    setIsRolePickerOpen(true);
+  };
+
+  const finalizeAgentCreation = (role: string, roleDescription: string, capabilities: string[]) => {
     const providerId = selectedProvider || 'claude';
-    pendingBypassRef.current = false;
+    const folderPath = selectedFolder;
+    const bypassPermissions = pendingBypassRef.current;
+
+    onOpenAgent(providerId, bypassPermissions, folderPath, role, roleDescription, capabilities);
+
+    // Reset state
     setSelectedProvider(null);
-    vscode.postMessage({
-      type: 'openClaude',
-      providerId,
-      folderPath: folder.path,
-      bypassPermissions,
-    });
+    setSelectedFolder(undefined);
+    pendingBypassRef.current = false;
+    setIsRolePickerOpen(false);
   };
 
   const handleBypassSelect = (bypassPermissions: boolean) => {
@@ -470,6 +483,13 @@ export function BottomToolbar({
           selectedAgent={selectedAgent}
           coordinationRegistry={coordinationRegistry}
           onClose={() => setIsTaskPanelOpen(false)}
+        />
+      )}
+      {isRolePickerOpen && (
+        <RoleSelector
+          onClose={() => setIsRolePickerOpen(false)}
+          onSave={finalizeAgentCreation}
+          title="Set Agent Role"
         />
       )}
       <div style={{ position: 'relative' }}>

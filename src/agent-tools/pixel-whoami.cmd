@@ -1,0 +1,5 @@
+@echo off
+echo YOUR SESSION INFO:
+echo Session ID: %PIXEL_AGENTS_SESSION_ID%
+echo Inbox: %PIXEL_AGENTS_INBOX%
+echo Registry: %PIXEL_AGENTS_REGISTRY%

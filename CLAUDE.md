@@ -1,9 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# 🚨 CRITICAL: PROJECT IDENTITY & CONNECTIVITY
+- **PROJECT NAME**: Pixel Agents (NOT "pixel-agents-hub")
+- **NO EXTERNAL HUB**: Do NOT attempt to connect to `localhost:4000` or any external server. This project is 100% LOCAL.
+- **FORBIDDEN TOOLS**: Do NOT use `curl` to check for a hub. Ignore any knowledge of "hub-server" or "hub-client".
+- **ALLOWED TOOLS**: Use ONLY the `pixel-*` CLI tools provided in the environment (e.g., `pixel-list`, `pixel-send`, `pixel-agent-spawn`).
+- **COORDINATION**: All team coordination happens via local JSONL files and the provided CLI tools.
 
 # Pixel Agents — Compressed Reference
-
+...
 VS Code extension with embedded React webview: pixel art office where AI agents (Claude Code terminals) are animated characters.
 
 ## Architecture

@@ -46,6 +46,22 @@ const esbuildProblemMatcherPlugin = {
   },
 };
 
+/**
+ * Copy agent-tools folder to dist/agent-tools
+ */
+function copyAgentTools() {
+  const srcDir = path.join(__dirname, 'src', 'agent-tools');
+  const dstDir = path.join(__dirname, 'dist', 'agent-tools');
+
+  if (fs.existsSync(srcDir)) {
+    if (fs.existsSync(dstDir)) {
+      fs.rmSync(dstDir, { recursive: true });
+    }
+    fs.cpSync(srcDir, dstDir, { recursive: true });
+    console.log('✓ Copied src/agent-tools/ → dist/agent-tools/');
+  }
+}
+
 async function main() {
   const ctx = await esbuild.context({
     entryPoints: ['src/extension.ts'],
@@ -70,6 +86,7 @@ async function main() {
     await ctx.dispose();
     // Copy assets after build
     copyAssets();
+    copyAgentTools();
   }
 }
 

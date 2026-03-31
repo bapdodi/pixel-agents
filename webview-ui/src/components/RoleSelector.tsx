@@ -5,28 +5,38 @@ import type { AgentRegistryEntry } from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
 
 interface RoleSelectorProps {
-  agentId: number;
-  entry: AgentRegistryEntry | undefined;
+  agentId?: number;
+  entry?: AgentRegistryEntry | undefined;
   onClose: () => void;
+  onSave?: (role: string, description: string, capabilities: string[]) => void;
+  title?: string;
 }
 
-export function RoleSelector({ agentId, entry, onClose }: RoleSelectorProps) {
+export function RoleSelector({ agentId, entry, onClose, onSave, title }: RoleSelectorProps) {
   const [role, setRole] = useState(entry?.role ?? '');
   const [desc, setDesc] = useState(entry?.roleDescription ?? '');
   const [caps, setCaps] = useState((entry?.capabilities ?? []).join(', '));
 
   function save() {
-    vscode.postMessage({
-      type: 'coordination',
-      subtype: 'saveRole',
-      agentId,
-      role: role.trim() || null,
-      roleDescription: desc.trim() || undefined,
-      capabilities: caps
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
+    const trimmedRole = role.trim() || null;
+    const trimmedDesc = desc.trim() || undefined;
+    const trimmedCaps = caps
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (onSave) {
+      onSave(trimmedRole || '', trimmedDesc || '', trimmedCaps);
+    } else if (agentId !== undefined) {
+      vscode.postMessage({
+        type: 'coordination',
+        subtype: 'saveRole',
+        agentId,
+        role: trimmedRole,
+        roleDescription: trimmedDesc,
+        capabilities: trimmedCaps,
+      });
+    }
     onClose();
   }
 
@@ -81,7 +91,7 @@ export function RoleSelector({ agentId, entry, onClose }: RoleSelectorProps) {
             letterSpacing: '0.5px',
           }}
         >
-          Set Role
+          {title || 'Set Role'}
         </div>
 
         <div style={{ marginBottom: 10 }}>

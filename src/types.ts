@@ -32,6 +32,7 @@ export type CoordinationMessageType =
   | 'broadcast'
   | 'send_to'
   | 'set_role'
+  | 'spawn_agent'
   | 'decline'
   | 'ack';
 
@@ -116,6 +117,8 @@ export interface AgentState {
   terminalBuffer: string[];
   /** Whether the JSONL file path has been resolved (true for Claude, deferred for Gemini) */
   jsonlFileResolved: boolean;
+  /** A2A: whether coordination context has been injected into PTY */
+  coordContextInjected?: boolean;
   /** A2A: session UUID derived from jsonlFile basename */
   sessionId?: string;
   /** A2A: assigned role */

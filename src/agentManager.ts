@@ -76,9 +76,21 @@ export async function launchNewTerminal(
     providerId?: string;
     folderPath?: string;
     bypassPermissions?: boolean;
+    role?: string;
+    roleDescription?: string;
+    capabilities?: string[];
+    extensionPath?: string;
   } = {},
 ): Promise<void> {
-  const { providerId = 'claude', folderPath, bypassPermissions } = options;
+  const {
+    providerId = 'claude',
+    folderPath,
+    bypassPermissions,
+    role,
+    roleDescription,
+    capabilities,
+    extensionPath,
+  } = options;
   const folders = vscode.workspace.workspaceFolders;
   const provider = getProvider(providerId);
   const id = nextAgentIdRef.current++;
@@ -110,7 +122,7 @@ export async function launchNewTerminal(
         `[AgentManager] 🚀 Spawning Agent ${id} PTY via ${shell} ${JSON.stringify(shellArgs)}`,
       );
 
-      const coordEnv = buildCoordEnv(sessionId);
+      const coordEnv = buildCoordEnv(sessionId, extensionPath);
 
       const ptyInstance: AgentPty | null = spawnAgentPty(
         id,
@@ -178,12 +190,11 @@ export async function launchNewTerminal(
             }
           }
 
-          // Also keep base64 for legacy replaying if needed (optional)
-          const b64 = Buffer.from(data).toString('base64');
-          a.terminalBuffer.push(b64);
+          // Send raw string data to prevent character corruption from chunked Base64
+          a.terminalBuffer.push(data);
           if (a.terminalBuffer.length > 500) a.terminalBuffer.shift();
 
-          wv?.postMessage({ type: 'agentTerminalData', id, data: b64 });
+          wv?.postMessage({ type: 'agentTerminalData', id, data });
         },
         coordEnv,
       );
@@ -213,6 +224,9 @@ export async function launchNewTerminal(
         terminalBuffer: [],
         jsonlFileResolved: !provider.getSessionIdRegex, // Immediate for Claude, deferred for Gemini
         sessionId,
+        role,
+        roleDescription,
+        capabilities,
       };
 
       if (ptyInstance) ptyInstance.id = id;
@@ -224,10 +238,9 @@ export async function launchNewTerminal(
       // Inject coordination context into PTY after startup settles
       if (agent.pty && (providerId === 'claude' || providerId === 'gemini')) {
         const capturedPty = agent.pty;
-        const capturedSessionId = sessionId;
         setTimeout(() => {
           try {
-            const msg = buildCoordContextMessage(capturedSessionId);
+            const msg = buildCoordContextMessage(agent);
             capturedPty.ptyProcess.write(msg + '\r');
           } catch (e) {
             console.warn('[AgentManager] Failed to inject coord context:', e);

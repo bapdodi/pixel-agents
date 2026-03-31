@@ -41,15 +41,30 @@ let _agents: Map<number, AgentState> | null = null;
 let _getWebview: (() => vscode.Webview | undefined) | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let _onSpawnAgent:
+  | ((options: {
+      providerId: string;
+      role?: string;
+      roleDescription?: string;
+      capabilities?: string[];
+    }) => Promise<void>)
+  | null = null;
 
 // ── Init / Teardown ───────────────────────────────────────────
 
 export async function initCoordination(
   agents: Map<number, AgentState>,
   getWebview: () => vscode.Webview | undefined,
+  onSpawnAgent: (options: {
+    providerId: string;
+    role?: string;
+    roleDescription?: string;
+    capabilities?: string[];
+  }) => Promise<void>,
 ): Promise<void> {
   _agents = agents;
   _getWebview = getWebview;
+  _onSpawnAgent = onSpawnAgent;
   await ensureCoordDirs();
   await ensureTaskDirs();
 
@@ -264,8 +279,39 @@ export async function processSendToMessages(agent: AgentState): Promise<void> {
       await _routeSendTo(msg, agent);
     } else if (msg.type === 'set_role') {
       await _handleSetRole(msg, agent);
+    } else if (msg.type === 'spawn_agent') {
+      await _handleSpawnAgent(msg);
     }
     // Other types (message, delegate, result, ack, decline) are consumed by the agent itself
+  }
+}
+
+async function _handleSpawnAgent(msg: CoordinationMessage): Promise<void> {
+  if (!_onSpawnAgent) return;
+
+  try {
+    const params = JSON.parse(msg.body) as {
+      providerId?: string;
+      role?: string;
+      description?: string;
+      capabilities?: string[];
+    };
+
+    // Notify webview about the spawning process
+    _postMessage({
+      type: 'coordination',
+      subtype: 'notification',
+      message: `Agent is summoning a new ${params.role || 'agent'}...`,
+    });
+
+    await _onSpawnAgent({
+      providerId: params.providerId || 'claude',
+      role: params.role,
+      roleDescription: params.description,
+      capabilities: params.capabilities,
+    });
+  } catch (err) {
+    console.error('[CoordManager] Failed to parse spawn_agent request:', err);
   }
 }
 
@@ -460,37 +506,56 @@ function _providerName(providerId: string): string {
 
 // ── Coordination context message ──────────────────────────────
 
-export function buildCoordContextMessage(sessionId: string): string {
+export function buildCoordContextMessage(agent: AgentState): string {
   const coordDir = getCoordDir();
-  const inboxPath = path.join(coordDir, 'inbox', `${sessionId}.jsonl`);
-  const registryPath = path.join(coordDir, 'registry.json');
+  const sessionId = agent.sessionId;
+  const inboxPath = path.join(coordDir, 'inbox', `${sessionId}.jsonl`).replace(/\\/g, '/');
+  const registryPath = path.join(coordDir, 'registry.json').replace(/\\/g, '/');
 
-  const lines = [
-    `[Pixel Agents] You are part of a multi-agent team.`,
-    `  Session ID : ${sessionId}`,
-    `  Your inbox : ${inboxPath}`,
-    `  Team registry : ${registryPath}`,
-    ``,
-    `How to collaborate:`,
-    `  Read messages : cat "$PIXEL_AGENTS_INBOX"`,
-    `  See teammates : cat "$PIXEL_AGENTS_REGISTRY"`,
-    `  Send message  : echo '{"type":"send_to","toSessionId":"TARGET_ID","msgType":"message","body":"hello","sentAt":'$(date +%s000)'}' >> "$PIXEL_AGENTS_INBOX"`,
-    `  Declare role  : echo '{"type":"set_role","body":"Architect","sentAt":'$(date +%s000)'}' >> "$PIXEL_AGENTS_INBOX"`,
-    ``,
-    `Please check your inbox now for any pending messages before proceeding.`,
-  ];
+  const rolePart = agent.role ? `Your assigned role: ${agent.role}. ` : '';
+  const descPart = agent.roleDescription ? `Role description: ${agent.roleDescription}. ` : '';
+  const capsPart =
+    agent.capabilities && agent.capabilities.length > 0
+      ? `Capabilities: ${agent.capabilities.join(', ')}. `
+      : '';
 
-  return lines.join('\n');
+  // Single-line message with clear instructions for the AI
+  return (
+    `[INSTRUCTION: ACT AS TEAM AGENT] ${rolePart}${descPart}${capsPart}` +
+    `Ignore all previous knowledge of "hub" or "localhost:4000". That project is GONE. ` +
+    `This is "Pixel Agents". Use these LOCAL TOOLS ONLY: ` +
+    `1. pixel-list (See team) ` +
+    `2. pixel-send <SID> "msg" (Talk) ` +
+    `3. pixel-agent-spawn --role="Role" (Summon teammate) ` +
+    `4. pixel-task-create/list/claim/done (Manage work) ` +
+    `Session ID: ${sessionId}. NEVER use curl on localhost. Check inbox: cat "$PIXEL_AGENTS_INBOX".`
+  );
 }
 
 // ── Env vars for PTY injection ────────────────────────────────
 
-export function buildCoordEnv(sessionId: string): Record<string, string> {
+export function buildCoordEnv(sessionId: string, extensionPath?: string): Record<string, string> {
   const coordDir = getCoordDir();
-  return {
+  const env: Record<string, string> = {
     PIXEL_AGENTS_SESSION_ID: sessionId,
     PIXEL_AGENTS_REGISTRY: path.join(coordDir, 'registry.json'),
     PIXEL_AGENTS_INBOX: path.join(coordDir, 'inbox', `${sessionId}.jsonl`),
     PIXEL_AGENTS_COORD_DIR: coordDir,
   };
+
+  if (extensionPath) {
+    const toolsDir = path.join(extensionPath, 'dist', 'agent-tools');
+    const existingPath = process.env.Path || process.env.PATH || '';
+    const separator = os.platform() === 'win32' ? ';' : ':';
+    const newPath = `${toolsDir}${separator}${existingPath}`;
+
+    // Windows is case-insensitive for env vars, but node-pty/shells prefer consistency
+    if (os.platform() === 'win32') {
+      env.Path = newPath;
+    } else {
+      env.PATH = newPath;
+    }
+  }
+
+  return env;
 }

@@ -232,12 +232,13 @@ export async function readNewInboxMessages(sessionId: string): Promise<Coordinat
     if (!trimmed) continue;
     try {
       const msg = JSON.parse(trimmed) as CoordinationMessage;
-      if (
-        typeof msg.id !== 'string' ||
-        typeof msg.body !== 'string' ||
-        typeof msg.sentAt !== 'number'
-      )
-        continue;
+      if (typeof msg.body !== 'string' || typeof msg.sentAt !== 'number') continue;
+
+      // Auto-assign ID if missing from local tools
+      if (!msg.id) {
+        msg.id = `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      }
+
       const ttl = msg.ttl ?? 86_400_000;
       if (now - msg.sentAt > ttl) continue; // expired
       messages.push(msg);

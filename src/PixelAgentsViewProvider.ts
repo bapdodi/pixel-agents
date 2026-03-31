@@ -118,6 +118,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             providerId: (message.providerId as string) || 'claude',
             folderPath: message.folderPath as string | undefined,
             bypassPermissions: message.bypassPermissions as boolean | undefined,
+            role: message.role as string | undefined,
+            roleDescription: message.roleDescription as string | undefined,
+            capabilities: message.capabilities as string[] | undefined,
+            extensionPath: this.context.extensionUri.fsPath,
           },
         );
       } else if (message.type === 'webviewError') {
@@ -138,6 +142,18 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const agent = this.agents.get(id);
         if (agent?.pty) {
           agent.pty.ptyProcess.write(input);
+        }
+      } else if (message.type === 'resizeAgentTerminal') {
+        const id = Number(message.id);
+        const cols = Number(message.cols);
+        const rows = Number(message.rows);
+        const agent = this.agents.get(id);
+        if (agent?.pty && cols > 0 && rows > 0) {
+          try {
+            agent.pty.ptyProcess.resize(cols, rows);
+          } catch (e) {
+            console.debug(`[Extension] Failed to resize PTY for agent ${id}:`, e);
+          }
         }
       } else if (message.type === 'focusAgent') {
         const id = Number(message.id);
@@ -286,7 +302,34 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           }
         })();
         await sendExistingAgents(this.agents, this.context, this.webview);
-        await initCoordination(this.agents, () => this.webview);
+        await initCoordination(
+          this.agents,
+          () => this.webview,
+          async (options) => {
+            await launchNewTerminal(
+              this.nextAgentId,
+              this.nextTerminalIndex,
+              this.agents,
+              this.activeAgentId,
+              this.knownJsonlFiles,
+              this.fileWatchers,
+              this.pollingTimers,
+              this.waitingTimers,
+              this.permissionTimers,
+              this.jsonlPollTimers,
+              this.projectScanTimer,
+              () => this.webview,
+              this.persistAgents,
+              {
+                providerId: options.providerId,
+                role: options.role,
+                roleDescription: options.roleDescription,
+                capabilities: options.capabilities,
+                extensionPath: this.context.extensionUri.fsPath,
+              },
+            );
+          },
+        );
         await sendRegistryToWebview();
       } else if (message.type === 'coordination') {
         if (message.subtype === 'saveRole') {

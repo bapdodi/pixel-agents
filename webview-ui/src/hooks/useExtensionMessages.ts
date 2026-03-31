@@ -122,6 +122,8 @@ export interface ExtensionMessageState {
   agentRoles: Record<number, string | null>;
   taskList: SharedTask[];
   coordLog: CoordLogEntry[];
+  systemNotification: string | null;
+  setSystemNotification: (msg: string | null) => void;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -161,6 +163,7 @@ export function useExtensionMessages(
   const [agentRoles, setAgentRoles] = useState<Record<number, string | null>>({});
   const [taskList, setTaskList] = useState<SharedTask[]>([]);
   const [coordLog, setCoordLog] = useState<CoordLogEntry[]>([]);
+  const [systemNotification, setSystemNotification] = useState<string | null>(null);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -243,12 +246,9 @@ export function useExtensionMessages(
         setAgents((prev) => {
           const next = prev.filter((a) => a !== id);
           // Auto-select another agent if the deleted one was selected
-          setSelectedAgent((current) => {
-            if (current === id) {
-              return next.length > 0 ? next[0] : null;
-            }
-            return current;
-          });
+          setSelectedAgent((current) =>
+            current === id ? (next.length > 0 ? next[0] : null) : current,
+          );
           return next;
         });
         setAgentTools((prev) => {
@@ -555,6 +555,10 @@ export function useExtensionMessages(
         } else if (sub === 'log') {
           const events = msg.events as CoordLogEntry[];
           setCoordLog((prev) => [...prev, ...events].slice(-50));
+        } else if (sub === 'notification') {
+          const content = msg.message as string;
+          setSystemNotification(content);
+          setTimeout(() => setSystemNotification(null), 3000);
         }
       } else if (msg.type === 'agentTerminalText') {
         const id = msg.id as number;
@@ -568,8 +572,7 @@ export function useExtensionMessages(
         });
       } else if (msg.type === 'agentTerminalData') {
         const id = msg.id as number;
-        const data = msg.data as string; // Base64 encoded raw bytes
-        console.info(`[Webview] 📨 RECEIVED TERMINAL DATA (${data.length} bytes) for Agent ${id}`);
+        const data = msg.data as string;
         setAgentTerminalRawData((prev) => {
           const list = prev[id] || [];
           return { ...prev, [id]: [...list, data] };
@@ -579,7 +582,7 @@ export function useExtensionMessages(
     window.addEventListener('message', handler);
     vscode.postMessage({ type: 'webviewReady' });
     return () => window.removeEventListener('message', handler);
-  }, [getOfficeState]);
+  }, [getOfficeState, onLayoutLoaded, isEditDirty]);
 
   return {
     agents,
@@ -602,5 +605,7 @@ export function useExtensionMessages(
     agentRoles,
     taskList,
     coordLog,
+    systemNotification,
+    setSystemNotification,
   };
 }

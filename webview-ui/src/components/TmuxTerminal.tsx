@@ -33,12 +33,10 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
   const lastProcessedIndexRef = useRef<{ [id: number]: number }>({});
   const selectedAgentRef = useRef<number | null>(selectedAgent);
 
-  // Sync refs for event listeners
   useEffect(() => {
     selectedAgentRef.current = selectedAgent;
   }, [selectedAgent]);
 
-  // Essential CSS Injection
   useEffect(() => {
     if (!document.getElementById('xterm-essential-style')) {
       const style = document.createElement('style');
@@ -47,10 +45,13 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         .xterm {
           cursor: text;
           position: relative;
+          padding: 10px;
+          height: 100%;
+          background-color: #1a1a1a;
+        }
+        .xterm .xterm-screen {
           user-select: text !important;
           -webkit-user-select: text !important;
-          padding: 8px;
-          height: 100%;
         }
         .xterm-viewport::-webkit-scrollbar { width: 8px; }
         .xterm-viewport::-webkit-scrollbar-track { background: #1a1a1a; }
@@ -61,8 +62,22 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
     }
   }, []);
 
+  const syncPtySize = (id: number, term: Terminal, fit: FitAddon) => {
+    try {
+      const container = containerRefs.current.get(id);
+      if (!container || container.clientWidth === 0) return;
+
+      fit.fit();
+      const { cols, rows } = term;
+      if (cols > 0 && rows > 0) {
+        vscode.postMessage({ type: 'resizeAgentTerminal', id, cols, rows });
+      }
+    } catch (e) {
+      console.debug('[TmuxTerminal] Sync size failed:', e);
+    }
+  };
+
   const createTerminal = (id: number, container: HTMLDivElement) => {
-    console.debug(`[TmuxTerminal] Creating terminal for agent ${id}`);
     const term = new Terminal({
       theme: {
         background: '#1a1a1a',
@@ -72,39 +87,45 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
       },
       fontFamily: 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
       fontSize: 13,
-      lineHeight: 1.1,
+      lineHeight: 1.2,
       cursorBlink: true,
       allowTransparency: true,
       scrollback: 5000,
       convertEol: true,
+      windowsMode: true,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(container);
 
+    // Custom key handler for Ctrl+C only (to support copy on selection)
+    // Ctrl+V is handled by browser/xterm defaults which then trigger onData
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown') {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
+          if (term.hasSelection()) {
+            document.execCommand('copy');
+            return false; // Don't send ^C to PTY when copying
+          }
+        }
+      }
+      return true;
+    });
+
     term.onData((data) => {
       vscode.postMessage({ type: 'agentTerminalInput', id, input: data });
     });
 
-    setTimeout(() => {
-      try {
-        fitAddon.fit();
-      } catch {
-        /* ignore */
-      }
-    }, 50);
+    setTimeout(() => syncPtySize(id, term, fitAddon), 200);
 
     return { term, fit: fitAddon };
   };
 
-  // Sync terminals with agents list
   useEffect(() => {
-    // 1. Remove terminals for agents no longer present
     const agentSet = new Set(agents);
     for (const [id, t] of terminalsRef.current.entries()) {
       if (!agentSet.has(id)) {
-        console.debug(`[TmuxTerminal] Disposing terminal for agent ${id}`);
         t.term.dispose();
         terminalsRef.current.delete(id);
         containerRefs.current.delete(id);
@@ -112,7 +133,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
       }
     }
 
-    // 2. Create terminals for new agents
     agents.forEach((id) => {
       if (!terminalsRef.current.has(id)) {
         const container = containerRefs.current.get(id);
@@ -123,7 +143,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
     });
   }, [agents]);
 
-  // Handle data updates for ALL terminals in background
   useEffect(() => {
     agents.forEach((id) => {
       const t = terminalsRef.current.get(id);
@@ -134,31 +153,19 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
 
       if (rawData.length > lastIdx) {
         for (let i = lastIdx; i < rawData.length; i++) {
-          try {
-            const b64 = rawData[i];
-            const binaryString = atob(b64);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let j = 0; j < binaryString.length; j++) {
-              bytes[j] = binaryString.charCodeAt(j);
-            }
-            t.term.write(bytes);
-          } catch {
-            // Silently ignore decoding errors
-          }
+          // Data is now raw string, no need to Base64 decode
+          t.term.write(rawData[i]);
         }
         lastProcessedIndexRef.current[id] = rawData.length;
       }
     });
   }, [agentTerminalRawData, agents]);
 
-  // Handle Resize and Fit
   useEffect(() => {
     const handleResize = () => {
-      terminalsRef.current.forEach((t) => {
-        try {
-          t.fit.fit();
-        } catch {
-          /* ignore */
+      terminalsRef.current.forEach((t, id) => {
+        if (selectedAgentRef.current === id) {
+          syncPtySize(id, t.term, t.fit);
         }
       });
     };
@@ -166,23 +173,37 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Fit when layout changes or selected agent changes
   useEffect(() => {
     if (!isMinimized && visible && selectedAgent !== null) {
-      const timer = setTimeout(() => {
-        const t = terminalsRef.current.get(selectedAgent);
-        if (t) {
-          try {
-            t.fit.fit();
+      const delays = [100, 300, 800];
+      const timers = delays.map((ms) =>
+        setTimeout(() => {
+          const t = terminalsRef.current.get(selectedAgent);
+          if (t) {
+            syncPtySize(selectedAgent, t.term, t.fit);
             t.term.focus();
-          } catch {
-            /* ignore */
           }
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+        }, ms),
+      );
+      return () => timers.forEach(clearTimeout);
     }
   }, [isMinimized, visible, selectedAgent]);
+
+  useEffect(() => {
+    if (isMinimized) return;
+    const observers: ResizeObserver[] = [];
+    containerRefs.current.forEach((container, id) => {
+      const observer = new ResizeObserver(() => {
+        const t = terminalsRef.current.get(id);
+        if (t && selectedAgentRef.current === id) {
+          syncPtySize(id, t.term, t.fit);
+        }
+      });
+      observer.observe(container);
+      observers.push(observer);
+    });
+    return () => observers.forEach((o) => o.disconnect());
+  }, [isMinimized, agents.length, selectedAgent]);
 
   if (!visible) return null;
 
@@ -197,14 +218,13 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         backgroundColor: '#1a1a1a',
         borderBottom: '2px solid #D97757',
         zIndex: 51,
-        transition: 'height 0.25s ease-out',
+        transition: 'height 0.2s ease-out',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
         boxShadow: isMinimized ? 'none' : '0 8px 32px rgba(0,0,0,0.6)',
       }}
     >
-      {/* Header */}
       <div
         className="terminal-header"
         style={{
@@ -239,7 +259,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         </div>
       </div>
 
-      {/* Terminal Viewport Container */}
       <div
         className="xterm-viewports"
         style={{
@@ -254,9 +273,7 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
           <div
             key={id}
             ref={(el) => {
-              if (el) {
-                containerRefs.current.set(id, el);
-              }
+              if (el) containerRefs.current.set(id, el);
             }}
             className="xterm-container"
             style={{
@@ -291,7 +308,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         )}
       </div>
 
-      {/* Agent Selector */}
       {!isMinimized && agents.length > 1 && (
         <div
           style={{
