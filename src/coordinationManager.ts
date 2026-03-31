@@ -458,6 +458,31 @@ function _providerName(providerId: string): string {
   return names[providerId] ?? providerId;
 }
 
+// ── Coordination context message ──────────────────────────────
+
+export function buildCoordContextMessage(sessionId: string): string {
+  const coordDir = getCoordDir();
+  const inboxPath = path.join(coordDir, 'inbox', `${sessionId}.jsonl`);
+  const registryPath = path.join(coordDir, 'registry.json');
+
+  const lines = [
+    `[Pixel Agents] You are part of a multi-agent team.`,
+    `  Session ID : ${sessionId}`,
+    `  Your inbox : ${inboxPath}`,
+    `  Team registry : ${registryPath}`,
+    ``,
+    `How to collaborate:`,
+    `  Read messages : cat "$PIXEL_AGENTS_INBOX"`,
+    `  See teammates : cat "$PIXEL_AGENTS_REGISTRY"`,
+    `  Send message  : echo '{"type":"send_to","toSessionId":"TARGET_ID","msgType":"message","body":"hello","sentAt":'$(date +%s000)'}' >> "$PIXEL_AGENTS_INBOX"`,
+    `  Declare role  : echo '{"type":"set_role","body":"Architect","sentAt":'$(date +%s000)'}' >> "$PIXEL_AGENTS_INBOX"`,
+    ``,
+    `Please check your inbox now for any pending messages before proceeding.`,
+  ];
+
+  return lines.join('\n');
+}
+
 // ── Env vars for PTY injection ────────────────────────────────
 
 export function buildCoordEnv(sessionId: string): Record<string, string> {

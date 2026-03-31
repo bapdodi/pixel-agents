@@ -33,6 +33,7 @@ export const COORDINATION_TASKS_FAILED_DIR = 'tasks/failed';
 export const COORDINATION_REGISTRY_FILE = 'registry.json';
 export const COORDINATION_HISTORY_FILE = 'history.jsonl';
 export const COORDINATION_AGENT_POLL_MS = 2_000;
+export const COORD_CONTEXT_INJECT_DELAY_MS = 3_000;
 export const COORDINATION_STALE_MS = 30_000;
 export const COORDINATION_LINK_TTL_MS = 10_000;
 export const TASK_TIMEOUT_MS = 120_000;

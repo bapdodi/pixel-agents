@@ -7,11 +7,13 @@ import { promisify } from 'util';
 import * as vscode from 'vscode';
 
 import {
+  COORD_CONTEXT_INJECT_DELAY_MS,
   JSONL_POLL_INTERVAL_MS,
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
 } from './constants.js';
 import {
+  buildCoordContextMessage,
   buildCoordEnv,
   deregisterAgent,
   initCoordination,
@@ -218,6 +220,20 @@ export async function launchNewTerminal(
       activeAgentIdRef.current = id;
       await persistAgents();
       await registerAgent(agent);
+
+      // Inject coordination context into PTY after startup settles
+      if (agent.pty && (providerId === 'claude' || providerId === 'gemini')) {
+        const capturedPty = agent.pty;
+        const capturedSessionId = sessionId;
+        setTimeout(() => {
+          try {
+            const msg = buildCoordContextMessage(capturedSessionId);
+            capturedPty.ptyProcess.write(msg + '\r');
+          } catch (e) {
+            console.warn('[AgentManager] Failed to inject coord context:', e);
+          }
+        }, COORD_CONTEXT_INJECT_DELAY_MS);
+      }
 
       console.log(`[AgentManager] 🔵 Phase 3: Project scan and JSONL polling for Agent ${id}`);
       await ensureProjectScan(
