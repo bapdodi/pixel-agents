@@ -1,5 +1,4 @@
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
@@ -30,12 +29,11 @@ import { readConfig, writeConfig } from './configPersistence.js';
 import {
   GLOBAL_KEY_LAST_SEEN_VERSION,
   GLOBAL_KEY_SOUND_ENABLED,
-  LAYOUT_REVISION_KEY,
-  WORKSPACE_KEY_AGENT_SEATS,
+  WORKSPACE_KEY_AGENT_SEATS
 } from './constants.js';
 import { ensureProjectScan } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
-import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
+import { watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { AgentState } from './types.js';
 
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
@@ -382,9 +380,11 @@ export function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.
   `;
   html = html.replace('<head>', `<head>${headInject}`);
 
+  const nonce = Date.now().toString();
   html = html.replace(/(href|src)="(\.\/|\/)?([^"]+)"/g, (match, attr, _prefix, filePath) => {
     if (filePath.startsWith('http') || filePath.startsWith('https') || filePath.startsWith('data:')) return match;
-    return `${attr}="${webview.asWebviewUri(vscode.Uri.joinPath(distPath, filePath))}"`;
+    const uri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, filePath));
+    return `${attr}="${uri}?v=${nonce}"`;
   });
 
   return html;

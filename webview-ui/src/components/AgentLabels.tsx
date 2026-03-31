@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { SubagentCharacter } from '../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../office/engine/officeState.js';
 import { CharacterState, TILE_SIZE } from '../office/types.js';
+import { getProviderLabel } from '../office/engine/characters.js';
 
 interface AgentLabelsProps {
   officeState: OfficeState;
@@ -79,7 +80,7 @@ export function AgentLabels({
           dotColor = 'var(--vscode-charts-blue, #3794ff)';
         }
 
-        const labelText = subLabelMap.get(id) || `Agent #${id}`;
+        const labelText = subLabelMap.get(id) || getProviderLabel(ch.providerId);
 
         return (
           <div
@@ -113,7 +114,7 @@ export function AgentLabels({
                 fontSize: isSub ? '16px' : '18px',
                 fontStyle: isSub ? 'italic' : undefined,
                 color: 'var(--vscode-foreground)',
-                background: 'rgba(30,30,46,0.7)',
+                background: 'rgba(30, 30, 46, 0.8)', // Matches --pixel-bg with alpha
                 padding: '1px 4px',
                 borderRadius: 2,
                 whiteSpace: 'nowrap',

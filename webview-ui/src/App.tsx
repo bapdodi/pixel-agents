@@ -147,7 +147,7 @@ function App() {
     agentTools,
     subagentTools,
     agentStatuses,
-    agentTerminalLines,
+    agentTerminalRawData,
     subagentCharacters,
     layoutReady,
     layoutWasReset,
@@ -422,11 +422,12 @@ function App() {
         <TmuxTerminal
           agents={agents}
           selectedAgent={selectedAgent}
-          agentTerminalLines={agentTerminalLines}
+          agentTerminalRawData={agentTerminalRawData}
           onSelectAgent={handleSelectAgent}
           visible={true}
           isMinimized={isTerminalMinimized}
           onToggleMinimize={handleToggleTerminal}
+          officeState={officeState}
         />
       )}
 

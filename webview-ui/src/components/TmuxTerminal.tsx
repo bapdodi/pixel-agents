@@ -1,119 +1,234 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
 
-import type { TerminalLine } from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
+
+import 'xterm/css/xterm.css';
 
 interface TmuxTerminalProps {
   agents: number[];
   selectedAgent: number | null;
-  agentTerminalLines: { [id: number]: TerminalLine[] };
+  agentTerminalRawData: { [id: number]: string[] };
   onSelectAgent: (id: number) => void;
   visible: boolean;
   isMinimized: boolean;
   onToggleMinimize: (e: React.MouseEvent) => void;
+  officeState: any;
 }
 
 const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
   agents,
   selectedAgent,
-  agentTerminalLines,
+  agentTerminalRawData,
   onSelectAgent,
   visible,
   isMinimized,
   onToggleMinimize,
+  officeState,
 }) => {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isTerminalReady, setIsTerminalReady] = useState(false);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const lastProcessedIndexRef = useRef<{ [id: number]: number }>({});
+  const selectedAgentRef = useRef<number | null>(selectedAgent);
 
-  // Auto-scroll to bottom when new lines arrive
+  // Keep ref in sync for event listeners
   useEffect(() => {
-    if (scrollRef.current && !isMinimized) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    selectedAgentRef.current = selectedAgent;
+    if (isTerminalReady && terminalRef.current && !isMinimized && selectedAgent !== null) {
+      terminalRef.current.focus();
     }
-  }, [agentTerminalLines, selectedAgent, isMinimized]);
+  }, [selectedAgent, isMinimized, isTerminalReady]);
 
-  // Ensure input is focused when selectedAgent changes
+  // Essential CSS Injection - Fixes interaction, scroll, and layout in Webview
   useEffect(() => {
-    if (visible && selectedAgent !== null && !isMinimized) {
-      inputRef.current?.focus();
+    if (!document.getElementById('xterm-essential-style')) {
+      const style = document.createElement('style');
+      style.id = 'xterm-essential-style';
+      style.textContent = `
+        .xterm {
+          cursor: text;
+          position: relative;
+          user-select: text !important;
+          -webkit-user-select: text !important;
+          padding: 8px;
+          height: 100%;
+        }
+        .xterm .xterm-viewport {
+          background-color: #1a1a1a;
+          overflow-y: auto !important;
+          cursor: default;
+          position: absolute;
+          right: 0; top: 0; bottom: 0; left: 0;
+          z-index: 1;
+        }
+        .xterm .xterm-screen {
+          position: relative;
+          z-index: 2;
+        }
+        .xterm .xterm-helpers {
+          position: absolute;
+          top: 0;
+          z-index: 5;
+        }
+        .xterm .xterm-helper-textarea {
+          position: absolute;
+          opacity: 0;
+          left: -9999px;
+          top: 0;
+          width: 0; height: 0;
+          z-index: -5;
+          white-space: nowrap;
+          overflow: hidden;
+          resize: none;
+        }
+        .xterm .xterm-rows {
+          font-family: inherit;
+          line-height: inherit;
+          color: #d1d1d1;
+        }
+        .xterm-cursor {
+          pointer-events: none;
+        }
+        /* Custom scrollbar for xterm */
+        .xterm-viewport::-webkit-scrollbar { width: 8px; }
+        .xterm-viewport::-webkit-scrollbar-track { background: #1a1a1a; }
+        .xterm-viewport::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #444; }
+      `;
+      document.head.appendChild(style);
     }
-  }, [selectedAgent, visible, isMinimized]);
+  }, []);
 
-  // Handle command sending
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    e.stopPropagation();
-    if (e.key === 'Enter' && selectedAgent !== null) {
-      const text = e.currentTarget.value.trim();
-      if (text) {
-        vscode.postMessage({ type: 'agentTerminalInput', id: selectedAgent, input: text + '\n' });
-        e.currentTarget.value = '';
+  // Initialize terminal
+  useEffect(() => {
+    if (!containerRef.current || terminalRef.current) return;
+
+    console.debug('[TmuxTerminal] Initializing xterm.js instance...');
+    
+    const term = new Terminal({
+      theme: {
+        background: '#1a1a1a',
+        foreground: '#d1d1d1',
+        cursor: '#D97757',
+        selectionBackground: 'rgba(217, 119, 87, 0.4)',
+      },
+      fontFamily: 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
+      fontSize: 13,
+      lineHeight: 1.1,
+      cursorBlink: true,
+      allowTransparency: true,
+      scrollback: 5000,
+      convertEol: true,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    
+    // Open in container
+    term.open(containerRef.current);
+    
+    // Slight delay to ensure DOM is ready before fit
+    setTimeout(() => {
+      try {
+        fitAddon.fit();
+        setIsTerminalReady(true);
+      } catch (e) {
+        console.warn('[TmuxTerminal] Fit failed on start:', e);
       }
+    }, 50);
+
+    term.onData((data) => {
+      if (selectedAgentRef.current !== null) {
+        vscode.postMessage({ type: 'agentTerminalInput', id: selectedAgentRef.current, input: data });
+      }
+    });
+
+    terminalRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    const resizeHandler = () => {
+      try { fitAddon.fit(); } catch (e) {}
+    };
+    window.addEventListener('resize', resizeHandler);
+
+    return () => {
+      window.removeEventListener('resize', resizeHandler);
+      term.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      setIsTerminalReady(false);
+    };
+  }, []);
+
+  // Handle agent switching and data updates
+  useEffect(() => {
+    const term = terminalRef.current;
+    if (!isTerminalReady || !term || selectedAgent === null) return;
+
+    try {
+      const lastIdx = lastProcessedIndexRef.current[selectedAgent] || 0;
+      const rawData = agentTerminalRawData[selectedAgent] || [];
+
+      if (rawData.length === 0) {
+        if (lastIdx !== 0) {
+          term.reset();
+          lastProcessedIndexRef.current[selectedAgent] = 0;
+        }
+        return;
+      }
+
+      // If switching agents or starting fresh
+      if (lastIdx === 0) {
+        term.reset();
+        for (const b64 of rawData) {
+          try {
+            const binaryString = atob(b64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            term.write(bytes);
+          } catch (e) {
+             // Silently catch decoding errors
+          }
+        }
+      } 
+      // If just appending new data
+      else if (rawData.length > lastIdx) {
+        for (let i = lastIdx; i < rawData.length; i++) {
+          try {
+            const b64 = rawData[i];
+            const binaryString = atob(b64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let j = 0; j < binaryString.length; j++) {
+              bytes[j] = binaryString.charCodeAt(j);
+            }
+            term.write(bytes);
+          } catch (e) {}
+        }
+      }
+
+      lastProcessedIndexRef.current[selectedAgent] = rawData.length;
+    } catch (err) {
+      console.error(`[TmuxTerminal] Data update error:`, err);
     }
-  };
+  }, [selectedAgent, agentTerminalRawData, isTerminalReady]);
+
+  // Refit when layout changes
+  useEffect(() => {
+    if (isTerminalReady && fitAddonRef.current && visible && !isMinimized) {
+      const timer = setTimeout(() => {
+        fitAddonRef.current?.fit();
+        terminalRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isMinimized, visible, isTerminalReady]);
 
   if (!visible) return null;
-
-  const currentLines = selectedAgent !== null ? agentTerminalLines[selectedAgent] || [] : [];
-
-  const renderWelcomeBox = () => (
-    <div
-      style={{
-        border: '1px solid #D97757',
-        borderRadius: '4px',
-        padding: '12px 16px',
-        margin: '8px 0 20px 0',
-        backgroundColor: 'rgba(217, 119, 87, 0.05)',
-        position: 'relative',
-        fontFamily: 'monospace',
-      }}
-    >
-      <div
-        style={{
-          position: 'absolute',
-          top: '-10px',
-          left: '16px',
-          backgroundColor: '#1a1a1a',
-          padding: '0 8px',
-          color: '#D97757',
-          fontSize: '11px',
-          fontWeight: 'bold',
-        }}
-      >
-        PIXEL AGENTS TERMINAL v1.0
-      </div>
-      <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ color: '#D97757', fontSize: '14px', marginBottom: '8px' }}>
-            AGENT CLI READY 🚀
-          </div>
-          <pre
-            style={{
-              margin: 0,
-              fontSize: '8px',
-              lineHeight: '1',
-              color: '#D97757',
-            }}
-          >
-            {`   ▆▆▆▆▆   
-  ▆     ▆  
- ▆  ●  ●  ▆ 
- ▆   ▆▆   ▆ 
-  ▆      ▆  
-   ▆▆▆▆▆   `}
-          </pre>
-        </div>
-        <div style={{ flex: 1, fontSize: '12px', color: '#d1d1d1' }}>
-          <div style={{ marginBottom: '8px', opacity: 0.8 }}>
-            Running in <span style={{ color: '#D97757' }}>Hi-Fi Readability Mode</span>
-          </div>
-          <div style={{ opacity: 0.6 }}>Direct DOM rendering for perfect text clarity.</div>
-          <div style={{ marginTop: '12px', fontSize: '10px', color: '#888' }}>
-            {selectedAgent !== null ? `ID: ${selectedAgent}` : 'Waiting for connection...'}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div
@@ -122,160 +237,113 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
         top: 0,
         left: 0,
         right: 0,
-        height: isMinimized ? 32 : 280,
+        height: isMinimized ? 32 : 300,
         backgroundColor: '#1a1a1a',
         borderBottom: '2px solid #D97757',
         zIndex: 51,
-        transition: 'height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        transition: 'height 0.25s ease-out',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        boxShadow: isMinimized ? 'none' : '0 4px 20px rgba(0,0,0,0.5)',
+        boxShadow: isMinimized ? 'none' : '0 8px 32px rgba(0,0,0,0.6)',
       }}
     >
-      {/* Header / Status Bar */}
+      {/* Header */}
       <div
+        className="terminal-header"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '4px 10px',
+          padding: '6px 12px',
           fontSize: '11px',
-          background: '#2d2d2d',
+          background: '#242424',
           color: '#D97757',
-          borderBottom: '1px solid #3d3d3d',
-          fontFamily: 'monospace',
+          borderBottom: '1px solid #333',
           fontWeight: 'bold',
           cursor: 'pointer',
+          userSelect: 'none',
         }}
         onClick={(e) => onToggleMinimize(e)}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div
             style={{
               width: 8,
               height: 8,
               borderRadius: '50%',
               background: agents.length > 0 ? '#4caf50' : '#f44336',
+              boxShadow: agents.length > 0 ? '0 0 8px #4caf50' : 'none',
             }}
           />
-          TERMINAL SYSTEM: {isMinimized ? 'MINIMIZED' : 'ONLINE'}
+          AGENT TERMINAL: {isMinimized ? 'PAUSED' : 'ACTIVE'}
         </div>
-        <div style={{ opacity: 0.8 }}>{isMinimized ? 'CLICK TO EXPAND ▴' : 'CLICK TO HIDE ▾'}</div>
+        <div style={{ fontSize: '10px', opacity: 0.7 }}>
+          {isMinimized ? 'CLICK TO EXPAND' : 'CLICK TO COLLAPSE'}
+        </div>
       </div>
 
-      {/* Terminal Content (DOM rendered) */}
-      {!isMinimized && (
-        <div
-          ref={scrollRef}
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '16px',
-            fontSize: '13px',
-            lineHeight: '1.4',
-            color: '#d1d1d1',
-            fontFamily: 'monospace',
-            WebkitFontSmoothing: 'subpixel-antialiased',
-          }}
-        >
-          {renderWelcomeBox()}
+      {/* Terminal Viewport */}
+      <div
+        ref={containerRef}
+        className="xterm-container"
+        onClick={() => terminalRef.current?.focus()}
+        style={{
+          flex: 1,
+          width: '100%',
+          display: isMinimized ? 'none' : 'block',
+          position: 'relative',
+        }}
+      />
 
-          {currentLines.length === 0 ? (
-            <div style={{ opacity: 0.4, marginTop: '8px' }}>
-              <span style={{ color: '#D97757' }}>&gt;</span> 초기화 대기 중...
-            </div>
-          ) : (
-            currentLines.map((line, i) => (
-              <div key={i} style={{ marginBottom: '4px', display: 'flex', gap: '8px' }}>
-                <span style={{ color: '#D97757', fontWeight: 'bold' }}>&gt;</span>
-                <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {line.content}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {/* Input Field */}
+      {/* Agent Selector */}
       {!isMinimized && (
         <div
           style={{
-            height: '40px',
-            background: '#242424',
-            borderTop: '1px solid #333',
+            height: 34,
+            background: '#141414',
             display: 'flex',
             alignItems: 'center',
-            padding: '0 12px',
-            gap: '8px',
+            padding: '0 8px',
+            gap: 4,
+            borderTop: '1px solid #222',
+            overflowX: 'auto',
           }}
         >
-          <span style={{ color: '#D97757', fontWeight: 'bold' }}>&gt;</span>
-          <input
-            ref={inputRef}
-            onKeyDown={handleKeyDown}
-            placeholder="명령어 입력..."
-            style={{
-              flex: 1,
-              background: 'none',
-              border: 'none',
-              outline: 'none',
-              color: '#f0f0f0',
-              fontSize: '13px',
-              fontFamily: 'monospace',
-            }}
-          />
-        </div>
-      )}
-
-      {/* Tab Bar Agent selection */}
-      <div
-        style={{
-          height: 32,
-          minHeight: 32,
-          background: '#1a1a1a',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '0 10px',
-          fontSize: '11px',
-          borderTop: '1px solid #333',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {agents.map((id) => {
-            const isActive = selectedAgent === id;
+            const ch = officeState.characters.get(id);
+            const providerId = ch ? ch.providerId : undefined;
+            const name = providerId === 'claude' ? 'Claude' : (providerId === 'gemini' ? 'Gemini' : `AG:${id}`);
+            
             return (
               <div
                 key={id}
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectAgent(id);
+                  if (terminalRef.current) {
+                    lastProcessedIndexRef.current[id] = 0;
+                  }
                 }}
                 style={{
-                  padding: '2px 8px',
-                  background: isActive ? '#D97757' : 'transparent',
-                  color: isActive ? '#1a1a1a' : '#D97757',
-                  borderRadius: 2,
+                  padding: '4px 10px',
+                  background: selectedAgent === id ? '#D97757' : '#222',
+                  color: selectedAgent === id ? '#000' : '#888',
+                  borderRadius: '3px 3px 0 0',
                   cursor: 'pointer',
-                  fontWeight: isActive ? 'bold' : 'normal',
                   fontSize: '10px',
+                  fontWeight: 'bold',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.15s ease',
+                  borderBottom: selectedAgent === id ? 'none' : '1px solid #333',
                 }}
               >
-                AG:{id}
+                {name}
               </div>
             );
           })}
         </div>
-      </div>
-
-      <style>{`
-        div::-webkit-scrollbar { width: 6px; }
-        div::-webkit-scrollbar-track { background: #1a1a1a; }
-        div::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-        div::-webkit-scrollbar-thumb:hover { background: #444; }
-      `}</style>
+      )}
     </div>
   );
 };

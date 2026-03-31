@@ -23,25 +23,25 @@ interface BottomToolbarProps {
 
 const panelStyle: React.CSSProperties = {
   position: 'absolute',
-  bottom: 10,
-  left: 10,
+  bottom: 8,
+  left: 8,
   zIndex: 'var(--pixel-controls-z)',
   display: 'flex',
   alignItems: 'center',
-  gap: 4,
+  gap: 2,
   background: 'var(--pixel-bg)',
-  border: '2px solid var(--pixel-border)',
+  border: '1px solid var(--pixel-border)',
   borderRadius: 0,
-  padding: '4px 6px',
+  padding: '2px 4px',
   boxShadow: 'var(--pixel-shadow)',
 };
 
 const btnBase: React.CSSProperties = {
-  padding: '5px 10px',
-  fontSize: '24px',
+  padding: '3px 8px',
+  fontSize: '13px',
   color: 'var(--pixel-text)',
   background: 'var(--pixel-btn-bg)',
-  border: '2px solid transparent',
+  border: '1px solid transparent',
   borderRadius: 0,
   cursor: 'pointer',
 };
@@ -49,7 +49,7 @@ const btnBase: React.CSSProperties = {
 const btnActive: React.CSSProperties = {
   ...btnBase,
   background: 'var(--pixel-active-bg)',
-  border: '2px solid var(--pixel-accent)',
+  border: '1px solid var(--pixel-accent)',
 };
 
 export function BottomToolbar({
@@ -162,12 +162,12 @@ export function BottomToolbar({
           onMouseLeave={() => setHovered(null)}
           style={{
             ...btnBase,
-            padding: '5px 12px',
+            padding: '4px 10px',
             background:
               hovered === 'agent' || isFolderPickerOpen || isBypassMenuOpen || isProviderMenuOpen
                 ? 'var(--pixel-agent-hover-bg)'
                 : 'var(--pixel-agent-bg)',
-            border: '2px solid var(--pixel-agent-border)',
+            border: '1px solid var(--pixel-agent-border)',
             color: 'var(--pixel-agent-text)',
           }}
         >
@@ -181,11 +181,11 @@ export function BottomToolbar({
               left: 0,
               marginBottom: 4,
               background: 'var(--pixel-bg)',
-              border: '2px solid var(--pixel-border)',
+              border: '1px solid var(--pixel-border)',
               borderRadius: 0,
               padding: 4,
               boxShadow: 'var(--pixel-shadow)',
-              minWidth: 180,
+              minWidth: 160,
               zIndex: 'var(--pixel-controls-z)',
             }}
           >
@@ -204,8 +204,8 @@ export function BottomToolbar({
                   display: 'block',
                   width: '100%',
                   textAlign: 'left',
-                  padding: '6px 10px',
-                  fontSize: '24px',
+                  padding: '5px 8px',
+                  fontSize: '13px',
                   color: 'var(--pixel-text)',
                   background: hoveredProvider === i ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                   border: 'none',
@@ -227,11 +227,11 @@ export function BottomToolbar({
               left: 0,
               marginBottom: 4,
               background: 'var(--pixel-bg)',
-              border: '2px solid var(--pixel-border)',
+              border: '1px solid var(--pixel-border)',
               borderRadius: 0,
               padding: 4,
               boxShadow: 'var(--pixel-shadow)',
-              minWidth: 180,
+              minWidth: 160,
               zIndex: 'var(--pixel-controls-z)',
             }}
           >
@@ -243,8 +243,8 @@ export function BottomToolbar({
                 display: 'block',
                 width: '100%',
                 textAlign: 'left',
-                padding: '6px 10px',
-                fontSize: '24px',
+                padding: '5px 8px',
+                fontSize: '13px',
                 color: 'var(--pixel-text)',
                 background: hoveredBypass === 0 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                 border: 'none',
@@ -263,8 +263,8 @@ export function BottomToolbar({
                 display: 'block',
                 width: '100%',
                 textAlign: 'left',
-                padding: '6px 10px',
-                fontSize: '24px',
+                padding: '5px 8px',
+                fontSize: '13px',
                 color: 'var(--pixel-warning-text)',
                 background: hoveredBypass === 1 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                 border: 'none',
@@ -273,7 +273,7 @@ export function BottomToolbar({
                 whiteSpace: 'nowrap',
               }}
             >
-              <span style={{ fontSize: '16px' }}>⚡</span> Bypass Permissions
+              Bypass Permissions
             </button>
           </div>
         )}
@@ -285,7 +285,7 @@ export function BottomToolbar({
               left: 0,
               marginBottom: 4,
               background: 'var(--pixel-bg)',
-              border: '2px solid var(--pixel-border)',
+              border: '1px solid var(--pixel-border)',
               borderRadius: 0,
               boxShadow: 'var(--pixel-shadow)',
               minWidth: 160,
@@ -302,8 +302,8 @@ export function BottomToolbar({
                   display: 'block',
                   width: '100%',
                   textAlign: 'left',
-                  padding: '6px 10px',
-                  fontSize: '22px',
+                  padding: '5px 8px',
+                  fontSize: '13px',
                   color: 'var(--pixel-text)',
                   background: hoveredFolder === i ? 'var(--pixel-btn-hover-bg)' : 'transparent',
                   border: 'none',
@@ -334,94 +334,96 @@ export function BottomToolbar({
       >
         Layout
       </button>
-      <div ref={terminalRef} style={{ position: 'relative' }}>
-        <button
-          onClick={handleTerminalBtnClick}
-          onMouseEnter={() => setHovered('terminal')}
-          onMouseLeave={() => setHovered(null)}
-          style={
-            !isTerminalMinimized
-              ? { ...btnActive }
-              : {
-                  ...btnBase,
-                  background:
-                    hovered === 'terminal' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
-                }
-          }
-          title="Terminal"
-        >
-          Terminal
-        </button>
-        {isTerminalMenuOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '100%',
-              left: 0,
-              marginBottom: 4,
-              background: 'var(--pixel-bg)',
-              border: '2px solid var(--pixel-border)',
-              borderRadius: 0,
-              padding: 4,
-              boxShadow: 'var(--pixel-shadow)',
-              minWidth: 140,
-              zIndex: 'var(--pixel-controls-z)',
-            }}
+      {agents.length > 0 && (
+        <div ref={terminalRef} style={{ position: 'relative' }}>
+          <button
+            onClick={handleTerminalBtnClick}
+            onMouseEnter={() => setHovered('terminal')}
+            onMouseLeave={() => setHovered(null)}
+            style={
+              !isTerminalMinimized
+                ? { ...btnActive }
+                : {
+                    ...btnBase,
+                    background:
+                      hovered === 'terminal' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
+                  }
+            }
+            title="Terminal"
           >
-            {agents.map((id, i) => (
-              <button
-                key={id}
-                onClick={() => {
-                  onSelectAgent(id);
-                  setIsTerminalMenuOpen(false);
-                }}
-                onMouseEnter={() => setHoveredTerminal(i)}
-                onMouseLeave={() => setHoveredTerminal(null)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '6px 10px',
-                  fontSize: '22px',
-                  color: selectedAgent === id ? 'var(--pixel-accent)' : 'var(--pixel-text)',
-                  background: hoveredTerminal === i ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                  border: 'none',
-                  borderRadius: 0,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Agent {id} {selectedAgent === id ? '●' : ''}
-              </button>
-            ))}
-            {agents.length > 0 && (
-              <>
-                <div style={{ height: 1, margin: '4px 0', background: 'var(--pixel-border)' }} />
+            Terminal
+          </button>
+          {isTerminalMenuOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '100%',
+                left: 0,
+                marginBottom: 4,
+                background: 'var(--pixel-bg)',
+                border: '1px solid var(--pixel-border)',
+                borderRadius: 0,
+                padding: 4,
+                boxShadow: 'var(--pixel-shadow)',
+                minWidth: 140,
+                zIndex: 'var(--pixel-controls-z)',
+              }}
+            >
+              {agents.map((id, i) => (
                 <button
+                  key={id}
                   onClick={() => {
-                    onToggleTerminal();
+                    onSelectAgent(id);
                     setIsTerminalMenuOpen(false);
                   }}
+                  onMouseEnter={() => setHoveredTerminal(i)}
+                  onMouseLeave={() => setHoveredTerminal(null)}
                   style={{
                     display: 'block',
                     width: '100%',
                     textAlign: 'left',
-                    padding: '6px 10px',
-                    fontSize: '20px',
-                    color: 'var(--pixel-text-dim)',
-                    background: 'transparent',
+                    padding: '5px 8px',
+                    fontSize: '13px',
+                    color: selectedAgent === id ? 'var(--pixel-accent)' : 'var(--pixel-text)',
+                    background: hoveredTerminal === i ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                     border: 'none',
                     borderRadius: 0,
                     cursor: 'pointer',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  {isTerminalMinimized ? 'Show Terminal' : 'Hide Terminal'}
+                  Agent {id} {selectedAgent === id ? '●' : ''}
                 </button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+              ))}
+              {agents.length > 0 && (
+                <>
+                  <div style={{ height: 1, margin: '4px 0', background: 'var(--pixel-border)' }} />
+                  <button
+                    onClick={() => {
+                      onToggleTerminal();
+                      setIsTerminalMenuOpen(false);
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '5px 8px',
+                      fontSize: '13px',
+                      color: 'var(--pixel-text-dim)',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: 0,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {isTerminalMinimized ? 'Show Terminal' : 'Hide Terminal'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div style={{ position: 'relative' }}>
         <button
           onClick={() => setIsSettingsOpen((v) => !v)}

@@ -22,6 +22,18 @@ export function isReadingTool(tool: string | null): boolean {
   return READING_TOOLS.has(tool);
 }
 
+/** Map providerId to a human-friendly name */
+export function getProviderLabel(providerId?: string): string {
+  if (!providerId || providerId === 'dev') return 'Agent';
+  const mapping: Record<string, string> = {
+    'claude': 'Claude',
+    'gemini': 'Gemini',
+    'openai': 'GPT',
+    'deepseek': 'DeepSeek',
+  };
+  return mapping[providerId] || providerId.charAt(0).toUpperCase() + providerId.slice(1);
+}
+
 /** Pixel center of a tile */
 function tileCenter(col: number, row: number): { x: number; y: number } {
   return {

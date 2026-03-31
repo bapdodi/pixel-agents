@@ -276,9 +276,14 @@ export class OfficeState {
       palette = preferredPalette;
       hueShift = preferredHueShift ?? 0;
     } else {
-      const pick = this.pickDiversePalette();
-      palette = pick.palette;
-      hueShift = pick.hueShift;
+      if (providerId === 'claude') {
+        palette = 5; // Use Amber/Purple character for Claude
+        hueShift = 0;
+      } else {
+        const pick = this.pickDiversePalette();
+        palette = pick.palette;
+        hueShift = pick.hueShift;
+      }
     }
 
     // Try preferred seat first, then any free seat
@@ -568,6 +573,9 @@ export class OfficeState {
         ch.seatTimer = -1;
         ch.path = [];
         ch.moveProgress = 0;
+      } else {
+        // If becoming active (typing in terminal), automatically walk to seat
+        this.sendToSeat(id);
       }
       this.rebuildFurnitureInstances();
     }

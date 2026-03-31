@@ -8,9 +8,8 @@ import * as vscode from 'vscode';
 
 import {
   JSONL_POLL_INTERVAL_MS,
-  TERMINAL_NAME_PREFIX,
   WORKSPACE_KEY_AGENT_SEATS,
-  WORKSPACE_KEY_AGENTS,
+  WORKSPACE_KEY_AGENTS
 } from './constants.js';
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
