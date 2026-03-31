@@ -10,6 +10,8 @@
 - **Agent connection diagnostics and JSONL parser resilience** ([#183](https://github.com/pablodelucca/pixel-agents/pull/183)) — Debug View shows agent connection state with diagnostic info. JSONL parser handles malformed/partial records gracefully. Simplified file watching to single poll for reliability.
 - **Browser preview mode** ([#143](https://github.com/pablodelucca/pixel-agents/pull/143)) — Preview the Pixel Agents webview in a browser for development and review.
 - **Always show overlay setting** — Option to keep agent overlay labels visible at all times, with reduced opacity for non-focused agents.
+- **Multi-Instance Terminal Architecture** — Replaced shared terminal with independent xterm.js instances per agent. Enables background data receiving, persistence across switches, and eliminates content corruption.
+- **Gemini Session ID Interception** — Support for Google Gemini CLI with dynamic session ID detection. Intercepts auto-generated UUIDs from terminal output to correctly track transcripts without unsupported flags.
 
 ### Fixes
 

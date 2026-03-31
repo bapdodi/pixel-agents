@@ -1,11 +1,11 @@
 import type * as vscode from 'vscode';
 
-export type AgentEventType = 
-  | 'tool_start' 
-  | 'tool_done' 
-  | 'status_change' 
-  | 'subagent_tool_start' 
-  | 'subagent_tool_done' 
+export type AgentEventType =
+  | 'tool_start'
+  | 'tool_done'
+  | 'status_change'
+  | 'subagent_tool_start'
+  | 'subagent_tool_done'
   | 'subagent_clear'
   | 'tools_clear'
   | 'turn_start'
@@ -42,14 +42,17 @@ export interface AIProvider {
 
   /** Parse a single line from the transcript file */
   parseLine(
-    line: string, 
-    agentId: number, 
-    context: { 
+    line: string,
+    agentId: number,
+    context: {
       activeToolNames: Map<string, string>;
       backgroundAgentToolIds: Set<string>;
-    }
+    },
   ): AgentEvent[] | null;
 
+  /** Optional: Regex to extract a dynamically generated session ID from terminal output */
+  getSessionIdRegex?(): RegExp;
+
   /** Check if a result indicates an async/background agent launch */
-  isAsyncAgentResult(block: any): boolean;
+  isAsyncAgentResult?(block: any): boolean;
 }

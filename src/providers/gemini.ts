@@ -2,17 +2,22 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { 
-  AgentEvent, 
-  AIProvider} from './types';
+import { AgentEvent, AIProvider } from './types';
 
 export class GeminiProvider implements AIProvider {
   readonly id = 'gemini';
   readonly name = 'Google Gemini';
   readonly terminalPrefix = 'Gemini';
 
-  async buildCommand(sessionId: string, options: { bypassPermissions?: boolean }): Promise<string> {
-    return `npx gemini --session-id ${sessionId}`;
+  async buildCommand(
+    _sessionId: string,
+    _options: { bypassPermissions?: boolean },
+  ): Promise<string> {
+    return `npx gemini`;
+  }
+
+  getSessionIdRegex(): RegExp {
+    return /Session ID:\s+([a-f0-9-]+)/i;
   }
 
   async getProjectDir(cwd: string): Promise<string> {
@@ -24,18 +29,44 @@ export class GeminiProvider implements AIProvider {
         const data = JSON.parse(raw);
         if (data[cwd]) return data[cwd];
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return path.join(os.homedir(), '.gemini', 'projects', cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
   }
 
   async getExpectedFile(projectDir: string, sessionId: string): Promise<string> {
-    return path.join(projectDir, `${sessionId}.jsonl`);
+    const specificPath = path.join(projectDir, `${sessionId}.jsonl`);
+    try {
+      await fs.promises.access(specificPath);
+      return specificPath;
+    } catch {
+      // Fallback: find the latest .jsonl file in the projectDir
+      try {
+        const files = await fs.promises.readdir(projectDir);
+        const jsonlFiles = files.filter((f) => f.endsWith('.jsonl'));
+        if (jsonlFiles.length === 0) return specificPath;
+
+        const stats = await Promise.all(
+          jsonlFiles.map(async (f) => {
+            const filePath = path.join(projectDir, f);
+            const stat = await fs.promises.stat(filePath);
+            return { name: f, mtime: stat.mtime.getTime() };
+          }),
+        );
+
+        stats.sort((a, b) => b.mtime - a.mtime);
+        return path.join(projectDir, stats[0].name);
+      } catch {
+        return specificPath;
+      }
+    }
   }
 
   parseLine(
-    line: string, 
-    agentId: number, 
-    context: { activeToolNames: Map<string, string>; backgroundAgentToolIds: Set<string> }
+    line: string,
+    agentId: number,
+    context: { activeToolNames: Map<string, string>; backgroundAgentToolIds: Set<string> },
   ): AgentEvent[] | null {
     try {
       const record = JSON.parse(line);
@@ -47,7 +78,7 @@ export class GeminiProvider implements AIProvider {
           type: 'tool_start',
           toolId: record.tool_call_id,
           toolName: record.name,
-          status: `Using ${record.name}`
+          status: `Using ${record.name}`,
         });
       } else if (record.type === 'tool_result' && record.tool_call_id) {
         events.push({ type: 'tool_done', toolId: record.tool_call_id });

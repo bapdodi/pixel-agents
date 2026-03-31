@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import {
   JSONL_POLL_INTERVAL_MS,
   WORKSPACE_KEY_AGENT_SEATS,
-  WORKSPACE_KEY_AGENTS
+  WORKSPACE_KEY_AGENTS,
 } from './constants.js';
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
@@ -111,6 +111,36 @@ export async function launchNewTerminal(
         const chunk = data;
         a.lineBuffer += chunk;
 
+        // Dynamic Session ID Detection (e.g. for Gemini)
+        if (!a.jsonlFileResolved && provider.getSessionIdRegex) {
+          const regex = provider.getSessionIdRegex();
+          const match = a.lineBuffer.match(regex);
+          if (match) {
+            const realSessionId = match[1];
+            console.log(`[AgentManager] 🎯 Detected Session ID for Agent ${id}: ${realSessionId}`);
+
+            // Resolve the actual file path
+            provider.getExpectedFile(a.projectDir, realSessionId).then((actualFile) => {
+              a.jsonlFile = actualFile;
+              a.jsonlFileResolved = true;
+              knownJsonlFiles.add(actualFile);
+
+              // Start polling/watching now that we have the real file
+              startGeminiPolling(
+                id,
+                agents,
+                jsonlPollTimers,
+                fileWatchers,
+                pollingTimers,
+                waitingTimers,
+                permissionTimers,
+                getWebview,
+              );
+              persistAgents();
+            });
+          }
+        }
+
         if (a.lineBuffer.includes('\n') || a.lineBuffer.length > 500) {
           const lines = a.lineBuffer.split(/\r?\n/);
           // Keep the last partial line in the buffer
@@ -162,6 +192,7 @@ export async function launchNewTerminal(
         providerId,
         pty: ptyInstance,
         terminalBuffer: [],
+        jsonlFileResolved: !provider.getSessionIdRegex, // Immediate for Claude, deferred for Gemini
       };
 
       if (ptyInstance) ptyInstance.id = id;
@@ -185,39 +216,19 @@ export async function launchNewTerminal(
         persistAgents,
       );
 
-      // Final poll for JSONL file
-      let pollCount = 0;
-      const pollTimer = setInterval(async () => {
-        pollCount++;
-        try {
-          const exists = await fs.promises
-            .access(agent.jsonlFile, fs.constants.F_OK)
-            .then(() => true)
-            .catch(() => false);
-          if (exists) {
-            clearInterval(pollTimer);
-            jsonlPollTimers.delete(id);
-            startFileWatching(
-              id,
-              agent.jsonlFile,
-              agents,
-              fileWatchers,
-              pollingTimers,
-              waitingTimers,
-              permissionTimers,
-              getWebview,
-            );
-            await readNewLines(id, agents, waitingTimers, permissionTimers, getWebview);
-          } else if (pollCount === 20) {
-            console.warn(
-              `[AgentManager] Agent ${id}: Timeout waiting for JSONL at ${path.basename(agent.jsonlFile)}`,
-            );
-          }
-        } catch {
-          /* ignore */
-        }
-      }, JSONL_POLL_INTERVAL_MS);
-      jsonlPollTimers.set(id, pollTimer);
+      // Start polling only if resolution is already done (Claude)
+      if (agent.jsonlFileResolved) {
+        startGeminiPolling(
+          id,
+          agents,
+          jsonlPollTimers,
+          fileWatchers,
+          pollingTimers,
+          waitingTimers,
+          permissionTimers,
+          getWebview,
+        );
+      }
     } catch (err) {
       console.error(`[AgentManager] ❌ CRITICAL: Failed to build Agent ${id}:`, err);
     }
@@ -324,6 +335,7 @@ export async function restoreAgents(
       folderName: p.folderName,
       providerId: p.providerId,
       terminalBuffer: [],
+      jsonlFileResolved: true, // Restored agents are always resolved
     };
 
     agents.set(p.id, agent);
@@ -485,4 +497,48 @@ export function sendTextToTerminal(
   } catch (err: any) {
     console.error(`[Pixel Agents] Failed to send text for Agent ${agentId}:`, err);
   }
+}
+
+/**
+ * Shared polling logic for Gemini and Claude
+ */
+function startGeminiPolling(
+  id: number,
+  agents: Map<number, AgentState>,
+  jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  getWebview: () => vscode.Webview | undefined,
+) {
+  const agent = agents.get(id);
+  if (!agent) return;
+
+  const pollTimer = setInterval(async () => {
+    try {
+      const exists = await fs.promises
+        .access(agent.jsonlFile, fs.constants.F_OK)
+        .then(() => true)
+        .catch(() => false);
+      if (exists) {
+        clearInterval(pollTimer);
+        jsonlPollTimers.delete(id);
+        startFileWatching(
+          id,
+          agent.jsonlFile,
+          agents,
+          fileWatchers,
+          pollingTimers,
+          waitingTimers,
+          permissionTimers,
+          getWebview,
+        );
+        await readNewLines(id, agents, waitingTimers, permissionTimers, getWebview);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, JSONL_POLL_INTERVAL_MS);
+  jsonlPollTimers.set(id, pollTimer);
 }

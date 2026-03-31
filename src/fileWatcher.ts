@@ -50,10 +50,10 @@ export async function readNewLines(
     const MAX_READ_BYTES = 65536;
     const bytesToRead = Math.min(stat.size - agent.fileOffset, MAX_READ_BYTES);
     const buf = Buffer.alloc(bytesToRead);
-    
+
     fd = await fs.promises.open(agent.jsonlFile, 'r');
     await fd.read(buf, 0, buf.length, agent.fileOffset);
-    
+
     agent.fileOffset += bytesToRead;
 
     const text = agent.lineBuffer + buf.toString('utf-8');
@@ -271,8 +271,8 @@ function adoptTerminalForFile(
     seenUnknownRecordTypes: new Set(),
     providerId: 'claude',
     terminalBuffer: [],
+    jsonlFileResolved: true,
   };
-
 
   agents.set(id, agent);
   activeAgentIdRef.current = id;

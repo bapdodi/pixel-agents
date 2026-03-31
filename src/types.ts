@@ -32,6 +32,8 @@ export interface AgentState {
   pty?: AgentPty | null;
   /** Buffer of raw terminal data (Base64) to replay on webview reconnect */
   terminalBuffer: string[];
+  /** Whether the JSONL file path has been resolved (true for Claude, deferred for Gemini) */
+  jsonlFileResolved: boolean;
 }
 
 export interface PersistedAgent {
