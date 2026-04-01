@@ -8,6 +8,7 @@ import {
   appendHistory,
   appendToInbox,
   buildRoutedMessage,
+  claimInboxMessage,
   claimTaskSync,
   completeTask,
   createTask,
@@ -275,6 +276,9 @@ export async function processSendToMessages(agent: AgentState): Promise<void> {
 
   const messages = await readNewInboxMessages(agent.sessionId);
   for (const msg of messages) {
+    const claimed = await claimInboxMessage(agent.sessionId, msg);
+    if (!claimed) continue;
+
     if (msg.type === 'send_to') {
       await _routeSendTo(msg, agent);
     } else if (msg.type === 'set_role') {
@@ -522,13 +526,14 @@ export function buildCoordContextMessage(agent: AgentState): string {
   // Single-line message with clear instructions for the AI
   return (
     `[INSTRUCTION: ACT AS TEAM AGENT] ${rolePart}${descPart}${capsPart}` +
-    `Ignore all previous knowledge of "hub" or "localhost:4000". That project is GONE. ` +
-    `This is "Pixel Agents". Use these LOCAL TOOLS ONLY: ` +
-    `1. pixel-list (See team) ` +
-    `2. pixel-send <SID> "msg" (Talk) ` +
-    `3. pixel-agent-spawn --role="Role" (Summon teammate) ` +
-    `4. pixel-task-create/list/claim/done (Manage work) ` +
-    `Session ID: ${sessionId}. NEVER use curl on localhost. Check inbox: cat "$PIXEL_AGENTS_INBOX".`
+    `⛔️ CRITICAL: NEVER READ OR RESEARCH layout.json, registry.json, or other internal files to understand team management. ` +
+    `Spawning, listing, and messaging agents are handled EXCLUSIVELY by your specialized TOOLS. ` +
+    `Using tools directly is much faster and more accurate. ` +
+    `- pa_spawn_agent: Summon/Spawn team member ` +
+    `- pa_list_agents: List team members ` +
+    `- pa_send_message: Talk/Message ` +
+    `- pa_task_create/list/claim/done: Manage tasks ` +
+    `Session ID: ${sessionId}. Check inbox: cat "$PIXEL_AGENTS_INBOX".`
   );
 }
 

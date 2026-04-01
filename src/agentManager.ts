@@ -19,6 +19,7 @@ import {
   initCoordination,
   registerAgent,
 } from './coordinationManager.js';
+import { getCoordDir, writeMcpConfig } from './coordinationPersistence.js';
 import { ensureProjectScan, readNewLines, startFileWatching } from './fileWatcher.js';
 import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { getProvider } from './providers/index.js';
@@ -56,6 +57,10 @@ async function resolveClaudeCommand(cmd: string): Promise<string> {
   } catch {
     return cmd;
   }
+}
+
+function getSessionMcpServerName(sessionId: string): string {
+  return `pixel-agents-${sessionId}`;
 }
 
 export async function launchNewTerminal(
@@ -107,7 +112,62 @@ export async function launchNewTerminal(
     try {
       console.log(`[AgentManager] 🟡 Phase 2: Building Agent ${id} infrastructure...`);
       const sessionId = crypto.randomUUID();
-      const cmd = await provider.buildCommand(sessionId, { bypassPermissions });
+      let cmd = await provider.buildCommand(sessionId, { bypassPermissions });
+
+      // Build MCP config for the agent
+      if (extensionPath) {
+        if (providerId === 'claude') {
+          try {
+            const mcpPath = await writeMcpConfig(sessionId, extensionPath);
+            cmd += ` --mcp-config "${mcpPath}"`;
+            console.log(`[AgentManager] 🛠️ Claude MCP Config generated: ${mcpPath}`);
+          } catch (e) {
+            console.warn('[AgentManager] Failed to create Claude MCP config:', e);
+          }
+        } else if (providerId === 'gemini') {
+          // Gemini uses 'gemini mcp add' to register servers
+          try {
+            const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
+            // We use a unique name for this session's server
+            const serverName = getSessionMcpServerName(sessionId);
+
+            // 1. Add the MCP server to Gemini CLI
+            const addCmd = `gemini mcp add "${serverName}" node "${mcpServerPath}" --env PIXEL_AGENTS_SESSION_ID=${sessionId}`;
+            console.log(`[AgentManager] 🛠️ Registering Gemini MCP server: ${serverName}`);
+
+            // Execute the add command (it's persistent for the user, but needed for the session)
+            await execAsync(addCmd);
+
+            // 2. Allow this server specifically for this session
+            cmd += ` --allowed-mcp-server-names "${serverName}"`;
+          } catch (e) {
+            console.warn('[AgentManager] Failed to register Gemini MCP server:', e);
+          }
+        } else if (providerId === 'openai') {
+          try {
+            const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
+            const serverName = getSessionMcpServerName(sessionId);
+            const coordDir = getCoordDir();
+            const addCmd =
+              `codex mcp add "${serverName}" ` +
+              `--env PIXEL_AGENTS_SESSION_ID=${sessionId} ` +
+              `--env PIXEL_AGENTS_COORD_DIR=${coordDir} ` +
+              `-- "${process.execPath}" "${mcpServerPath}"`;
+            console.log(`[AgentManager] 🛠️ Registering Codex MCP server: ${serverName}`);
+
+            try {
+              await execAsync(`codex mcp remove "${serverName}"`);
+            } catch {
+              // Ignore if the server was not registered yet.
+            }
+
+            await execAsync(addCmd);
+          } catch (e) {
+            console.warn('[AgentManager] Failed to register Codex MCP server:', e);
+          }
+        }
+      }
+
       const resolvedCmd = await resolveClaudeCommand(cmd);
       const projectDir = await provider.getProjectDir(cwd);
       const expectedFile = await provider.getExpectedFile(projectDir, sessionId);
@@ -236,7 +296,10 @@ export async function launchNewTerminal(
       await registerAgent(agent);
 
       // Inject coordination context into PTY after startup settles
-      if (agent.pty && (providerId === 'claude' || providerId === 'gemini')) {
+      if (
+        agent.pty &&
+        (providerId === 'claude' || providerId === 'gemini' || providerId === 'openai')
+      ) {
         const capturedPty = agent.pty;
         setTimeout(() => {
           try {
@@ -296,7 +359,30 @@ export async function removeAgent(
   const agent = agents.get(agentId);
   if (!agent) return;
 
+  // Kill the PTY process or close the terminal
+  try {
+    if (agent.terminalRef) {
+      agent.terminalRef.dispose();
+    } else if (agent.pty) {
+      agent.pty.ptyProcess.kill();
+      if (typeof agent.pty.dispose === 'function') {
+        agent.pty.dispose();
+      }
+    }
+  } catch (err) {
+    console.error(`[AgentManager] Failed to kill terminal for Agent ${agentId}:`, err);
+  }
+
   if (agent.sessionId) {
+    if (agent.providerId === 'openai') {
+      const serverName = getSessionMcpServerName(agent.sessionId);
+      try {
+        await execAsync(`codex mcp remove "${serverName}"`);
+      } catch (err) {
+        console.warn(`[AgentManager] Failed to remove Codex MCP server ${serverName}:`, err);
+      }
+    }
+
     await deregisterAgent(agent.sessionId);
   }
 

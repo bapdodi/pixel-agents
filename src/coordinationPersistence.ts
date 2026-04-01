@@ -8,7 +8,9 @@ import {
   COORDINATION_AGENTS_DIR,
   COORDINATION_DIR,
   COORDINATION_HISTORY_FILE,
+  COORDINATION_INBOX_CLAIMS_DIR,
   COORDINATION_INBOX_DIR,
+  COORDINATION_MCP_CONFIGS_DIR,
   COORDINATION_REGISTRY_FILE,
   COORDINATION_STALE_MS,
   COORDINATION_TASKS_CLAIMED_DIR,
@@ -40,6 +42,14 @@ export function getInboxDir(): string {
   return path.join(getCoordDir(), COORDINATION_INBOX_DIR);
 }
 
+export function getInboxClaimsDir(): string {
+  return path.join(getCoordDir(), COORDINATION_INBOX_CLAIMS_DIR);
+}
+
+export function getSessionInboxClaimsDir(sessionId: string): string {
+  return path.join(getInboxClaimsDir(), sessionId);
+}
+
 export function getRegistryFilePath(): string {
   return path.join(getCoordDir(), COORDINATION_REGISTRY_FILE);
 }
@@ -50,6 +60,37 @@ export function getAgentFilePath(sessionId: string): string {
 
 export function getInboxFilePath(sessionId: string): string {
   return path.join(getInboxDir(), `${sessionId}.jsonl`);
+}
+
+export function getMcpConfigsDir(): string {
+  return path.join(getCoordDir(), COORDINATION_MCP_CONFIGS_DIR);
+}
+
+export function getMcpConfigFilePath(sessionId: string): string {
+  return path.join(getMcpConfigsDir(), `${sessionId}.json`);
+}
+
+export async function writeMcpConfig(sessionId: string, extensionPath: string): Promise<string> {
+  const dir = getMcpConfigsDir();
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
+  const config = {
+    mcpServers: {
+      'pixel-agents': {
+        command: 'node',
+        args: [mcpServerPath],
+        env: {
+          PIXEL_AGENTS_SESSION_ID: sessionId,
+          PIXEL_AGENTS_COORD_DIR: getCoordDir(),
+        },
+      },
+    },
+  };
+
+  const filePath = getMcpConfigFilePath(sessionId);
+  await fs.promises.writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8');
+  return filePath;
 }
 
 export function getHistoryFilePath(): string {
@@ -66,6 +107,7 @@ export function extractSessionId(jsonlFile: string): string {
 export async function ensureCoordDirs(): Promise<void> {
   await fs.promises.mkdir(getAgentsDir(), { recursive: true });
   await fs.promises.mkdir(getInboxDir(), { recursive: true });
+  await fs.promises.mkdir(getInboxClaimsDir(), { recursive: true });
 }
 
 // ── Per-agent file (agents/<session-id>.json) ─────────────────
@@ -92,6 +134,12 @@ export async function deleteAgentEntry(sessionId: string): Promise<void> {
 export async function deleteInboxFile(sessionId: string): Promise<void> {
   try {
     await fs.promises.unlink(getInboxFilePath(sessionId));
+  } catch {
+    /* already gone */
+  }
+
+  try {
+    await fs.promises.rm(getSessionInboxClaimsDir(sessionId), { recursive: true, force: true });
   } catch {
     /* already gone */
   }
@@ -234,10 +282,7 @@ export async function readNewInboxMessages(sessionId: string): Promise<Coordinat
       const msg = JSON.parse(trimmed) as CoordinationMessage;
       if (typeof msg.body !== 'string' || typeof msg.sentAt !== 'number') continue;
 
-      // Auto-assign ID if missing from local tools
-      if (!msg.id) {
-        msg.id = `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      }
+      msg.id = getStableInboxMessageId(msg.id, trimmed);
 
       const ttl = msg.ttl ?? 86_400_000;
       if (now - msg.sentAt > ttl) continue; // expired
@@ -248,6 +293,37 @@ export async function readNewInboxMessages(sessionId: string): Promise<Coordinat
   }
 
   return messages;
+}
+
+function getStableInboxMessageId(existingId: string | undefined, rawLine: string): string {
+  const normalized = existingId?.trim();
+  if (normalized) return normalized;
+  return `line-${crypto.createHash('sha1').update(rawLine).digest('hex')}`;
+}
+
+export async function claimInboxMessage(
+  sessionId: string,
+  message: Pick<CoordinationMessage, 'id' | 'sentAt'>,
+): Promise<boolean> {
+  const claimDir = getSessionInboxClaimsDir(sessionId);
+  const claimFile = path.join(
+    claimDir,
+    `${crypto.createHash('sha1').update(message.id).digest('hex')}.json`,
+  );
+
+  await fs.promises.mkdir(claimDir, { recursive: true });
+
+  try {
+    await fs.promises.writeFile(
+      claimFile,
+      JSON.stringify({ id: message.id, sentAt: message.sentAt, claimedAt: Date.now() }),
+      { encoding: 'utf-8', flag: 'wx' },
+    );
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
 }
 
 /** Append a routed message to target's inbox */
