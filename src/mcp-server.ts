@@ -86,6 +86,7 @@ async function handleRequest(rawRequest: string): Promise<void> {
   try {
     const request = JSON.parse(rawRequest);
     const { method, params, id } = request;
+    const isNotification = id === undefined || id === null;
 
     if (method === 'initialize') {
       sendResponse(id, {
@@ -162,6 +163,10 @@ async function handleRequest(rawRequest: string): Promise<void> {
     if (method === 'tools/call') {
       const result = await handleToolCall(params?.name, params?.arguments ?? {});
       sendResponse(id, result);
+      return;
+    }
+
+    if (isNotification) {
       return;
     }
 

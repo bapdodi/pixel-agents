@@ -45,6 +45,21 @@ import type { LayoutWatcher } from './layoutPersistence.js';
 import { watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { AgentState } from './types.js';
 
+const E2E_PICK_AGENT_DIR_ENV = 'PIXEL_AGENTS_E2E_PICK_FOLDER';
+
+async function pickAgentDirectory(): Promise<vscode.Uri[] | undefined> {
+  const testFolder = process.env[E2E_PICK_AGENT_DIR_ENV]?.trim();
+  if (testFolder) {
+    return [vscode.Uri.file(testFolder)];
+  }
+
+  return vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+  });
+}
+
 export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   nextAgentId = { current: 1 };
   nextTerminalIndex = { current: 1 };
@@ -232,10 +247,11 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           lastSeenVersion,
           extensionVersion,
           externalAssetDirectories: config.externalAssetDirectories,
+          recentAgentDirectories: config.recentAgentDirectories,
         });
 
         const wsFolders = vscode.workspace.workspaceFolders;
-        if (wsFolders && wsFolders.length > 1) {
+        if (wsFolders && wsFolders.length > 0) {
           this.webview?.postMessage({
             type: 'workspaceFolders',
             folders: wsFolders.map((f) => ({ name: f.name, path: f.uri.fsPath })),
@@ -397,6 +413,24 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         this.webview?.postMessage({
           type: 'externalAssetDirectoriesUpdated',
           dirs: cfg.externalAssetDirectories,
+        });
+      } else if (message.type === 'pickAgentDirectory') {
+        const uris = await pickAgentDirectory();
+        if (!uris || uris.length === 0) return;
+        const pickedPath = uris[0].fsPath;
+        const cfg = await readConfig();
+        cfg.recentAgentDirectories = [
+          pickedPath,
+          ...cfg.recentAgentDirectories.filter((dir) => dir !== pickedPath),
+        ].slice(0, 8);
+        await writeConfig(cfg);
+        this.webview?.postMessage({
+          type: 'agentDirectoryPicked',
+          path: pickedPath,
+        });
+        this.webview?.postMessage({
+          type: 'recentAgentDirectoriesUpdated',
+          dirs: cfg.recentAgentDirectories,
         });
       }
     });

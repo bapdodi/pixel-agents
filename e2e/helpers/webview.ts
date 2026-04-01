@@ -126,3 +126,57 @@ export async function clickAddAgent(frame: Frame): Promise<void> {
   await expect(btn).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
   await btn.click();
 }
+
+/**
+ * Open the agent creation flow in the webview and complete provider/role selection.
+ */
+export async function createAgent(
+  frame: Frame,
+  options: {
+    providerName?: 'Claude Code' | 'OpenAI Codex' | 'Google Gemini' | 'System Shell (Debug)';
+    folderMode?: 'workspace' | 'browse';
+    workspaceFolderName?: string;
+    role?: string;
+    description?: string;
+    capabilities?: string;
+  } = {},
+): Promise<void> {
+  const {
+    providerName = 'Claude Code',
+    folderMode = 'workspace',
+    workspaceFolderName = 'workspace',
+    role = 'Architect',
+    description = 'End-to-end test agent',
+    capabilities = 'testing',
+  } = options;
+
+  await clickAddAgent(frame);
+
+  const providerButton = frame.locator('button', { hasText: providerName });
+  await expect(providerButton).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+  await providerButton.click();
+
+  if (folderMode === 'browse') {
+    const browseButton = frame.locator('button', { hasText: 'Browse Folder...' });
+    await expect(browseButton).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+    await browseButton.click();
+  } else {
+    const workspaceButton = frame.locator('button', { hasText: workspaceFolderName }).first();
+    await expect(workspaceButton).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+    await workspaceButton.click();
+  }
+
+  const roleInput = frame.locator('input[placeholder="Role name"]');
+  await expect(roleInput).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+  await roleInput.fill(role);
+
+  const descriptionInput = frame.locator('input[placeholder="When to use this agent"]');
+  await descriptionInput.fill(description);
+
+  const capabilitiesInput = frame.locator('input[placeholder="code-review, testing, ..."]');
+  await capabilitiesInput.fill(capabilities);
+
+  const saveButton = frame.locator('button', { hasText: 'Save' });
+  await expect(saveButton).toBeVisible({ timeout: WEBVIEW_TIMEOUT_MS });
+  await saveButton.click();
+}

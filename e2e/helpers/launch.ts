@@ -19,6 +19,8 @@ export interface VSCodeSession {
   tmpHome: string;
   /** Workspace directory opened in VS Code. */
   workspaceDir: string;
+  /** Optional mock path returned by the agent folder browser. */
+  pickedFolderDir?: string;
   /** Path to the mock invocations log. */
   mockLogFile: string;
   cleanup: () => Promise<void>;
@@ -30,18 +32,30 @@ export interface VSCodeSession {
  * Uses an isolated temp HOME and injects the mock `claude` binary at the
  * front of PATH so no real Claude CLI is needed.
  */
-export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
+export async function launchVSCode(
+  testTitle: string,
+  options: {
+    enableBrowseFolderMock?: boolean;
+    useRealHome?: boolean;
+    workspaceDirOverride?: string;
+  } = {},
+): Promise<VSCodeSession> {
   const vscodePath = fs.readFileSync(VSCODE_PATH_FILE, 'utf8').trim();
 
   // --- Isolated temp directories ---
   const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'pixel-e2e-'));
-  const tmpHome = path.join(tmpBase, 'home');
-  const workspaceDir = path.join(tmpBase, 'workspace');
+  const isolatedHome = path.join(tmpBase, 'home');
+  const workspaceDir = options.workspaceDirOverride ?? path.join(tmpBase, 'workspace');
+  const pickedFolderDir = path.join(tmpBase, 'picked-folder');
   const userDataDir = path.join(tmpBase, 'userdata');
   const mockBinDir = path.join(tmpBase, 'bin');
+  const tmpHome = options.useRealHome ? os.homedir() : isolatedHome;
 
-  fs.mkdirSync(tmpHome, { recursive: true });
+  if (!options.useRealHome) {
+    fs.mkdirSync(tmpHome, { recursive: true });
+  }
   fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.mkdirSync(pickedFolderDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(mockBinDir, { recursive: true });
 
@@ -71,10 +85,10 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
   }
 
   // Copy mock-claude into an isolated bin dir
-  if (IS_WINDOWS) {
+  if (!options.useRealHome && IS_WINDOWS) {
     // Windows: copy the .cmd batch file as 'claude.cmd'
     fs.copyFileSync(MOCK_CLAUDE_CMD_PATH, path.join(mockBinDir, 'claude.cmd'));
-  } else {
+  } else if (!options.useRealHome) {
     const mockDest = path.join(mockBinDir, 'claude');
     fs.copyFileSync(MOCK_CLAUDE_PATH, mockDest);
     fs.chmodSync(mockDest, 0o755);
@@ -122,11 +136,15 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     HOME: tmpHome,
-    // Prepend mock bin so 'claude' resolves to our mock
-    PATH: `${mockBinDir}${PATH_SEP}${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
+    PATH: options.useRealHome
+      ? (process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin')
+      : `${mockBinDir}${PATH_SEP}${process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin'}`,
     // Prevent VS Code from trying to talk to real accounts / telemetry
     VSCODE_TELEMETRY_DISABLED: '1',
   };
+  if (options.enableBrowseFolderMock) {
+    env.PIXEL_AGENTS_E2E_PICK_FOLDER = pickedFolderDir;
+  }
 
   // --- VS Code launch args ---
   const args = [
@@ -172,10 +190,23 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
         // keychain may not exist or already be removed
       }
     }
-    try {
-      fs.rmSync(tmpBase, { recursive: true, force: true });
-    } catch {
-      // ignore cleanup errors
+    if (!options.useRealHome) {
+      try {
+        fs.rmSync(tmpBase, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+    } else {
+      try {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
+      try {
+        fs.rmSync(pickedFolderDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
+      }
     }
   };
 
@@ -214,7 +245,15 @@ export async function launchVSCode(testTitle: string): Promise<VSCodeSession> {
       await window.waitForTimeout(500);
     }
 
-    return { app, window, tmpHome, workspaceDir: resolvedWorkspaceDir, mockLogFile, cleanup };
+    return {
+      app,
+      window,
+      tmpHome,
+      workspaceDir: resolvedWorkspaceDir,
+      pickedFolderDir,
+      mockLogFile,
+      cleanup,
+    };
   } catch (error) {
     await cleanup();
     throw error;

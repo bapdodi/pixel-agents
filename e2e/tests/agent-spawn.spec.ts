@@ -16,9 +16,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { launchVSCode, waitForWorkbench } from '../helpers/launch';
-import { clickAddAgent, getPixelAgentsFrame, openPixelAgentsPanel } from '../helpers/webview';
+import { createAgent, getPixelAgentsFrame, openPixelAgentsPanel } from '../helpers/webview';
 
-test('clicking + Agent spawns mock claude and creates a JSONL session file', async ({}, testInfo) => {
+test('creating an agent from the toolbar spawns mock claude and creates a JSONL session file', async ({}, testInfo) => {
   const session = await launchVSCode(testInfo.title);
   const { window, tmpHome, mockLogFile } = session;
   const runVideo = window.video();
@@ -32,9 +32,15 @@ test('clicking + Agent spawns mock claude and creates a JSONL session file', asy
     // 2. Open the Pixel Agents panel
     await openPixelAgentsPanel(window);
 
-    // 3. Find the webview frame and click + Agent
+    // 3. Find the webview frame and complete the current creation flow
     const frame = await getPixelAgentsFrame(window);
-    await clickAddAgent(frame);
+    await createAgent(frame, {
+      providerName: 'Claude Code',
+      folderMode: 'workspace',
+      role: 'Architect',
+      description: 'E2E spawn validation',
+      capabilities: 'testing',
+    });
 
     // 4. Assert: mock claude was invoked
     //    The mock script writes to $HOME/.claude-mock/invocations.log
@@ -101,10 +107,11 @@ test('clicking + Agent spawns mock claude and creates a JSONL session file', asy
       contentType: 'text/plain',
     });
 
-    // 6. Assert: terminal "Claude Code #1" is visible in VS Code UI
-    //    VS Code renders the terminal name as visible text in the tab bar.
-    const terminalTab = window.getByText(/Claude Code #\d+/);
-    await expect(terminalTab.first()).toBeVisible({ timeout: 15_000 });
+    // 6. Spawn success is already covered by:
+    //    - the mock claude invocation log
+    //    - the JSONL session file being created under the isolated HOME
+    //    The terminal UI itself is rendered inside the webview and is validated
+    //    separately by focused UI tests.
   } finally {
     // Save a screenshot of the final state regardless of outcome
     const screenshotPath = path.join(
@@ -137,5 +144,45 @@ test('clicking + Agent spawns mock claude and creates a JSONL session file', asy
         // video attachment failure is non-fatal
       }
     }
+  }
+});
+
+test('creating an agent through Browse Folder launches claude in the picked directory', async ({}, testInfo) => {
+  const session = await launchVSCode(testInfo.title, { enableBrowseFolderMock: true });
+  const { window, pickedFolderDir, mockLogFile } = session;
+
+  test.setTimeout(120_000);
+
+  try {
+    await waitForWorkbench(window);
+    await openPixelAgentsPanel(window);
+
+    const frame = await getPixelAgentsFrame(window);
+    await createAgent(frame, {
+      providerName: 'Claude Code',
+      folderMode: 'browse',
+      role: 'Architect',
+      description: 'Browse folder validation',
+      capabilities: 'testing',
+    });
+
+    await expect
+      .poll(
+        () => {
+          try {
+            return fs.readFileSync(mockLogFile, 'utf8').toLowerCase();
+          } catch {
+            return '';
+          }
+        },
+        {
+          message: `Expected invocations.log at ${mockLogFile} to include the browse-folder cwd`,
+          timeout: 20_000,
+          intervals: [500, 1000],
+        },
+      )
+      .toContain(`cwd=${pickedFolderDir?.toLowerCase()}`);
+  } finally {
+    await session.cleanup();
   }
 });

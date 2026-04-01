@@ -53,14 +53,59 @@ async function resolveClaudeCommand(cmd: string): Promise<string> {
     const { stdout } = await execAsync('where.exe claude.cmd', { timeout: 2000 });
     const lines = stdout.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
     const claudePath = lines[0]?.trim();
-    return claudePath || cmd;
+    if (!claudePath) return cmd;
+
+    const rest = cmd.slice('claude'.length);
+    const escapedPath = claudePath.includes(' ') ? `"${claudePath}"` : claudePath;
+    return `${escapedPath}${rest}`;
   } catch {
     return cmd;
   }
 }
 
+async function getNodeCommand(): Promise<string> {
+  const execPath = process.execPath;
+  const base = path.basename(execPath).toLowerCase();
+
+  if (base === 'node' || base === 'node.exe') {
+    return execPath.includes(' ') ? `"${execPath}"` : execPath;
+  }
+
+  if (os.platform() === 'win32') {
+    try {
+      const { stdout } = await execAsync('where.exe node.exe', { timeout: 2000 });
+      const nodePath = stdout
+        .split(/\r?\n/)
+        .map((line: string) => line.trim())
+        .find((line: string) => line.length > 0);
+      if (nodePath) {
+        return nodePath.includes(' ') ? `"${nodePath}"` : nodePath;
+      }
+    } catch {
+      // Fall back to PATH lookup below.
+    }
+  }
+
+  return 'node';
+}
+
 function getSessionMcpServerName(sessionId: string): string {
   return `pixel-agents-${sessionId}`;
+}
+
+function resolveLaunchCwd(folderPath?: string): string {
+  if (folderPath?.trim()) return folderPath;
+
+  const activeEditorPath = vscode.window.activeTextEditor?.document.uri.fsPath;
+  if (activeEditorPath) {
+    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(activeEditorPath));
+    if (folder?.uri.fsPath) return folder.uri.fsPath;
+  }
+
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders?.length) return folders[0].uri.fsPath;
+
+  return os.homedir();
 }
 
 export async function launchNewTerminal(
@@ -96,13 +141,17 @@ export async function launchNewTerminal(
     capabilities,
     extensionPath,
   } = options;
-  const folders = vscode.workspace.workspaceFolders;
   const provider = getProvider(providerId);
   const id = nextAgentIdRef.current++;
 
   // Phase 1: Notify UI immediately to prevent "WAITING FOR AGENT CONNECTION" hang
-  const cwd = folderPath || folders?.[0]?.uri.fsPath || os.homedir();
+  const folders = vscode.workspace.workspaceFolders;
+  const cwd = resolveLaunchCwd(folderPath);
   const folderName = folders && folders.length > 1 && cwd ? path.basename(cwd) : undefined;
+
+  console.log(
+    `[AgentManager] Launch context for Agent ${id}: provider=${providerId}, requestedFolder=${folderPath || '(none)'}, resolvedCwd=${cwd}`,
+  );
 
   console.log(`[AgentManager] 🟢 Phase 1: Notifying UI for Agent ${id}`);
   getWebview()?.postMessage({ type: 'agentCreated', id, folderName, providerId });
@@ -148,11 +197,12 @@ export async function launchNewTerminal(
             const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
             const serverName = getSessionMcpServerName(sessionId);
             const coordDir = getCoordDir();
+            const nodeCommand = await getNodeCommand();
             const addCmd =
               `codex mcp add "${serverName}" ` +
               `--env PIXEL_AGENTS_SESSION_ID=${sessionId} ` +
               `--env PIXEL_AGENTS_COORD_DIR=${coordDir} ` +
-              `-- "${process.execPath}" "${mcpServerPath}"`;
+              `-- ${nodeCommand} "${mcpServerPath}"`;
             console.log(`[AgentManager] 🛠️ Registering Codex MCP server: ${serverName}`);
 
             try {
