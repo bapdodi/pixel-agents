@@ -35,6 +35,7 @@ interface BottomToolbarProps {
   taskList: SharedTask[];
   coordinationRegistry: AgentRegistryEntry[];
   coordLog: CoordLogEntry[];
+  onCloseAgent: (id: number) => void;
 }
 
 const panelStyle: React.CSSProperties = {
@@ -86,6 +87,7 @@ export function BottomToolbar({
   taskList,
   coordinationRegistry,
   coordLog,
+  onCloseAgent,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -484,6 +486,23 @@ export function BottomToolbar({
           coordinationRegistry={coordinationRegistry}
           onClose={() => setIsTaskPanelOpen(false)}
         />
+      )}
+      {selectedAgent !== null && (
+        <button
+          onClick={() => onCloseAgent(selectedAgent)}
+          onMouseEnter={() => setHovered('dismiss')}
+          onMouseLeave={() => setHovered(null)}
+          style={{
+            ...btnBase,
+            color: '#ff4d4d',
+            background: hovered === 'dismiss' ? 'rgba(255, 77, 77, 0.15)' : 'transparent',
+            border: '1px solid rgba(255, 77, 77, 0.3)',
+            marginLeft: 4,
+          }}
+          title="Dismiss current agent"
+        >
+          Dismiss
+        </button>
       )}
       {isRolePickerOpen && (
         <RoleSelector

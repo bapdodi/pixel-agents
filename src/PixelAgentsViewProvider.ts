@@ -162,14 +162,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         }
       } else if (message.type === 'closeAgent') {
         const id = Number(message.id);
-        const agent = this.agents.get(id);
-        if (agent) {
-          if (agent.terminalRef) {
-            agent.terminalRef.dispose();
-          } else {
-            agent.pty?.dispose();
-          }
-        }
+        await removeAgent(
+          id,
+          this.agents,
+          this.fileWatchers,
+          this.pollingTimers,
+          this.waitingTimers,
+          this.permissionTimers,
+          this.jsonlPollTimers,
+          this.persistAgents,
+        );
+        this.webview?.postMessage({ type: 'agentClosed', id });
       } else if (message.type === 'saveAgentSeats') {
         await this.context.workspaceState.update(WORKSPACE_KEY_AGENT_SEATS, message.seats);
       } else if (message.type === 'saveLayout') {

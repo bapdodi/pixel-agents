@@ -388,6 +388,7 @@ function App() {
         taskList={taskList}
         coordinationRegistry={coordinationRegistry}
         coordLog={coordLog}
+        onCloseAgent={handleCloseAgent}
       />
 
       <VersionIndicator
@@ -474,7 +475,7 @@ function App() {
         />
       )}
 
-      {!isDebugMode && (
+      {!isDebugMode && agents.length > 0 && (
         <TmuxTerminal
           agents={agents}
           selectedAgent={selectedAgent}
@@ -482,7 +483,6 @@ function App() {
           onSelectAgent={handleSelectAgent}
           visible={true}
           isMinimized={isTerminalMinimized}
-          onToggleMinimize={handleToggleTerminal}
           officeState={officeState}
         />
       )}

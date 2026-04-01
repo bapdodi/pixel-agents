@@ -14,7 +14,6 @@ interface TmuxTerminalProps {
   onSelectAgent: (id: number) => void;
   visible: boolean;
   isMinimized: boolean;
-  onToggleMinimize: (e: React.MouseEvent) => void;
   officeState: OfficeState;
 }
 
@@ -25,7 +24,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
   onSelectAgent,
   visible,
   isMinimized,
-  onToggleMinimize,
   officeState,
 }) => {
   const terminalsRef = useRef<Map<number, { term: Terminal; fit: FitAddon }>>(new Map());
@@ -77,13 +75,24 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
     }
   };
 
-  const createTerminal = (id: number, container: HTMLDivElement) => {
+  const createTerminal = (id: number, container: HTMLDivElement, providerId?: string) => {
+    let cursorColor = '#D97757'; // Default Claude-like
+    let selectionColor = 'rgba(217, 119, 87, 0.4)';
+
+    if (providerId === 'gemini') {
+      cursorColor = '#4285f4';
+      selectionColor = 'rgba(66, 133, 244, 0.4)';
+    } else if (providerId === 'openai') {
+      cursorColor = '#10a37f';
+      selectionColor = 'rgba(16, 163, 127, 0.4)';
+    }
+
     const term = new Terminal({
       theme: {
         background: '#1a1a1a',
         foreground: '#d1d1d1',
-        cursor: '#D97757',
-        selectionBackground: 'rgba(217, 119, 87, 0.4)',
+        cursor: cursorColor,
+        selectionBackground: selectionColor,
       },
       fontFamily: 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
       fontSize: 13,
@@ -137,7 +146,8 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
       if (!terminalsRef.current.has(id)) {
         const container = containerRefs.current.get(id);
         if (container) {
-          terminalsRef.current.set(id, createTerminal(id, container));
+          const providerId = officeState.characters.get(id)?.providerId;
+          terminalsRef.current.set(id, createTerminal(id, container, providerId));
         }
       }
     });
@@ -226,40 +236,6 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
       }}
     >
       <div
-        className="terminal-header"
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '6px 12px',
-          fontSize: '11px',
-          background: '#242424',
-          color: '#D97757',
-          borderBottom: '1px solid #333',
-          fontWeight: 'bold',
-          cursor: 'pointer',
-          userSelect: 'none',
-        }}
-        onClick={(e) => onToggleMinimize(e)}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: agents.length > 0 ? '#4caf50' : '#f44336',
-              boxShadow: agents.length > 0 ? '0 0 8px #4caf50' : 'none',
-            }}
-          />
-          AGENT TERMINAL: {isMinimized ? 'PAUSED' : 'ACTIVE'}
-        </div>
-        <div style={{ fontSize: '10px', opacity: 0.7 }}>
-          {isMinimized ? 'CLICK TO EXPAND' : 'CLICK TO COLLAPSE'}
-        </div>
-      </div>
-
-      <div
         className="xterm-viewports"
         style={{
           flex: 1,
@@ -324,8 +300,19 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
           {agents.map((id) => {
             const ch = officeState.characters.get(id);
             const providerId = ch ? ch.providerId : undefined;
+
+            let tabColor = '#D97757'; // Default Claude
+            if (providerId === 'gemini') tabColor = '#4285f4';
+            else if (providerId === 'openai') tabColor = '#10a37f';
+
             const name =
-              providerId === 'claude' ? 'Claude' : providerId === 'gemini' ? 'Gemini' : `AG:${id}`;
+              providerId === 'claude'
+                ? 'Claude'
+                : providerId === 'gemini'
+                  ? 'Gemini'
+                  : providerId === 'openai'
+                    ? 'OpenAI'
+                    : `AG:${id}`;
 
             return (
               <div
@@ -336,7 +323,7 @@ const TmuxTerminal: React.FC<TmuxTerminalProps> = ({
                 }}
                 style={{
                   padding: '4px 10px',
-                  background: selectedAgent === id ? '#D97757' : '#222',
+                  background: selectedAgent === id ? tabColor : '#222',
                   color: selectedAgent === id ? '#000' : '#888',
                   borderRadius: '3px 3px 0 0',
                   cursor: 'pointer',
