@@ -2,25 +2,28 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { 
-  AgentEvent, 
-  AIProvider} from './types';
+import { AgentEvent, AIProvider } from './types';
 
 export class OpenAIProvider implements AIProvider {
   readonly id = 'openai';
   readonly name = 'OpenAI Codex';
   readonly terminalPrefix = 'Codex';
 
-  async buildCommand(sessionId: string, options: { bypassPermissions?: boolean }): Promise<string> {
-    // Note: Codex might not support --session-id directly in the same way,
-    // but we'll use it if available or rely on rollout files.
+  async buildCommand(
+    _sessionId: string,
+    _options: { bypassPermissions?: boolean },
+  ): Promise<string> {
     return 'codex';
   }
 
   async getProjectDir(cwd: string): Promise<string> {
-    const dirName = cwd.replace(/[^a-zA-Z0-9-]/g, '-');
+    // Better path to folder mapping for Windows/POSIX
+    const dirName = cwd
+      .replace(/[:\\/]/g, '-')
+      .replace(/--+/g, '-')
+      .replace(/^-+|-+$/g, '');
     const baseDir = path.join(os.homedir(), '.o1', 'sessions', dirName);
-    
+
     try {
       await fs.promises.access(baseDir);
     } catch {
@@ -33,7 +36,9 @@ export class OpenAIProvider implements AIProvider {
           const match = candidates.find((c) => c.toLowerCase() === lowerDirName);
           if (match) return path.join(sessionsRoot, match);
         }
-      } catch { /* ignore scan errors */ }
+      } catch {
+        /* ignore scan errors */
+      }
     }
     return baseDir;
   }
@@ -43,9 +48,9 @@ export class OpenAIProvider implements AIProvider {
   }
 
   parseLine(
-    line: string, 
-    agentId: number, 
-    context: { activeToolNames: Map<string, string>; backgroundAgentToolIds: Set<string> }
+    line: string,
+    agentId: number,
+    context: { activeToolNames: Map<string, string>; backgroundAgentToolIds: Set<string> },
   ): AgentEvent[] | null {
     try {
       const record = JSON.parse(line);
@@ -53,7 +58,7 @@ export class OpenAIProvider implements AIProvider {
 
       // OpenAI Codex JSONL format handling
       // Example: {"type": "tool_call", "tool_call_id": "...", "name": "...", "arguments": {...}}
-      if (record.type === 'tool_call' || record.role === 'assistant' && record.tool_calls) {
+      if (record.type === 'tool_call' || (record.role === 'assistant' && record.tool_calls)) {
         const calls = record.tool_calls || [record];
         for (const call of calls) {
           const toolId = call.id || call.tool_call_id;
@@ -63,7 +68,7 @@ export class OpenAIProvider implements AIProvider {
               type: 'tool_start',
               toolId,
               toolName,
-              status: `Using ${toolName}`
+              status: `Using ${toolName}`,
             });
           }
         }

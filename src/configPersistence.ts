@@ -6,10 +6,12 @@ import { CONFIG_FILE_NAME, LAYOUT_FILE_DIR } from './constants.js';
 
 export interface PixelAgentsConfig {
   externalAssetDirectories: string[];
+  recentAgentDirectories: string[];
 }
 
 const DEFAULT_CONFIG: PixelAgentsConfig = {
   externalAssetDirectories: [],
+  recentAgentDirectories: [],
 };
 
 function getConfigFilePath(): string {
@@ -29,6 +31,9 @@ export async function readConfig(): Promise<PixelAgentsConfig> {
     return {
       externalAssetDirectories: Array.isArray(parsed.externalAssetDirectories)
         ? parsed.externalAssetDirectories.filter((d): d is string => typeof d === 'string')
+        : [],
+      recentAgentDirectories: Array.isArray(parsed.recentAgentDirectories)
+        ? parsed.recentAgentDirectories.filter((d): d is string => typeof d === 'string')
         : [],
     };
   } catch (err) {

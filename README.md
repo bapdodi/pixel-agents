@@ -108,6 +108,17 @@ Pixel Agents watches Claude Code's JSONL transcript files to track what each age
 
 The webview runs a lightweight game loop with canvas rendering, BFS pathfinding, and a character state machine (idle → walk → type/read). Everything is pixel-perfect at integer zoom levels.
 
+## Agent Coordination Architecture
+
+Pixel Agents also includes a file-backed coordination layer for multi-agent workflows.
+
+- Each managed agent gets a session ID, inbox file, registry entry, and coordination environment variables at launch.
+- Agent-to-agent communication is routed by the extension through `~/.pixel-agents/coordination/` instead of direct in-memory messaging.
+- Shared tasks are stored on disk and use atomic rename for claims and recovery.
+- The office UI renders coordination as animated arcs between agents, separate from transcript-driven tool activity.
+
+See [docs/agent-to-agent-coordination.md](docs/agent-to-agent-coordination.md) for the full architecture and current implementation status.
+
 ## Tech Stack
 
 - **Extension**: TypeScript, VS Code Webview API, esbuild

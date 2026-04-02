@@ -42,6 +42,9 @@ let _agents: Map<number, AgentState> | null = null;
 let _getWebview: (() => vscode.Webview | undefined) | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let _sendTextToTerminal:
+  | ((agentId: number, text: string, agents: Map<number, AgentState>) => void)
+  | null = null;
 let _onSpawnAgent:
   | ((options: {
       providerId: string;
@@ -62,12 +65,17 @@ export async function initCoordination(
     roleDescription?: string;
     capabilities?: string[];
   }) => Promise<void>,
+  sendTextToTerminal: (agentId: number, text: string, agents: Map<number, AgentState>) => void,
 ): Promise<void> {
   _agents = agents;
   _getWebview = getWebview;
   _onSpawnAgent = onSpawnAgent;
+  _sendTextToTerminal = sendTextToTerminal;
   await ensureCoordDirs();
   await ensureTaskDirs();
+
+  // Initial cleanup of ghost agents from previous sessions
+  await pruneStaleAgents();
 
   if (_pollTimer) clearInterval(_pollTimer);
   _pollTimer = setInterval(() => void _poll(), COORDINATION_AGENT_POLL_MS);
@@ -88,6 +96,9 @@ export function disposeCoordination(): void {
     _heartbeatTimer = null;
   }
   stopInboxWatcher();
+
+  // Clean up stale agent files when shutting down
+  void pruneStaleAgents();
 }
 
 // ── Agent registration ────────────────────────────────────────
@@ -285,8 +296,20 @@ export async function processSendToMessages(agent: AgentState): Promise<void> {
       await _handleSetRole(msg, agent);
     } else if (msg.type === 'spawn_agent') {
       await _handleSpawnAgent(msg);
+    } else if (
+      msg.type === 'message' ||
+      msg.type === 'delegate' ||
+      msg.type === 'result' ||
+      msg.type === 'broadcast'
+    ) {
+      // Notify the agent in its terminal
+      const fromRole = msg.fromRole ? ` (${msg.fromRole})` : '';
+      const notification =
+        `\r\n\r\n[SYSTEM] New ${msg.type} from Agent ${msg.fromSessionId?.substring(0, 8)}${fromRole}: "${msg.body.substring(0, 100)}${msg.body.length > 100 ? '...' : ''}"\r\n` +
+        `Check your inbox for full details: cat "$PIXEL_AGENTS_INBOX"\r\n\r\n`;
+
+      _sendTextToTerminal?.(agent.id, notification, _agents!);
     }
-    // Other types (message, delegate, result, ack, decline) are consumed by the agent itself
   }
 }
 
@@ -375,7 +398,6 @@ export async function sendDirectMessage(
 
 async function _poll(): Promise<void> {
   if (!_agents) return;
-  await pruneStaleAgents();
 
   const recovered = await recoverTimedOutTasks();
   if (recovered.length > 0) {
@@ -511,10 +533,13 @@ function _providerName(providerId: string): string {
 // ── Coordination context message ──────────────────────────────
 
 export function buildCoordContextMessage(agent: AgentState): string {
+  if (agent.providerId === 'openai' || agent.providerId === 'gemini') {
+    return '';
+  }
+
   const coordDir = getCoordDir();
   const sessionId = agent.sessionId;
   const inboxPath = path.join(coordDir, 'inbox', `${sessionId}.jsonl`).replace(/\\/g, '/');
-  const registryPath = path.join(coordDir, 'registry.json').replace(/\\/g, '/');
 
   const rolePart = agent.role ? `Your assigned role: ${agent.role}. ` : '';
   const descPart = agent.roleDescription ? `Role description: ${agent.roleDescription}. ` : '';
@@ -523,17 +548,20 @@ export function buildCoordContextMessage(agent: AgentState): string {
       ? `Capabilities: ${agent.capabilities.join(', ')}. `
       : '';
 
-  // Single-line message with clear instructions for the AI
+  // Stronger instruction for AI agents
   return (
-    `[INSTRUCTION: ACT AS TEAM AGENT] ${rolePart}${descPart}${capsPart}` +
-    `⛔️ CRITICAL: NEVER READ OR RESEARCH layout.json, registry.json, or other internal files to understand team management. ` +
-    `Spawning, listing, and messaging agents are handled EXCLUSIVELY by your specialized TOOLS. ` +
-    `Using tools directly is much faster and more accurate. ` +
-    `- pa_spawn_agent: Summon/Spawn team member ` +
-    `- pa_list_agents: List team members ` +
-    `- pa_send_message: Talk/Message ` +
-    `- pa_task_create/list/claim/done: Manage tasks ` +
-    `Session ID: ${sessionId}. Check inbox: cat "$PIXEL_AGENTS_INBOX".`
+    `\r\n[SYSTEM DIRECTIVE: ACT AS PIXEL AGENTS TEAM MEMBER]\r\n` +
+    `${rolePart}${descPart}${capsPart}\r\n` +
+    `⛔️ CRITICAL: Do NOT attempt to manage the team by reading files like layout.json or registry.json. ` +
+    `You MUST use your specialized TOOLS for all coordination:\r\n` +
+    `- pa_list_agents: See who else is in the office\r\n` +
+    `- pa_check_messages: Check your inbox for messages from other agents\r\n` +
+    `- pa_send_message: Send a message to another agent (use their Session ID from pa_list_agents)\r\n` +
+    `- pa_spawn_agent: Summon a new specialist teammate\r\n` +
+    `- pa_task_create/list/claim/done: Coordinate shared tasks\r\n\r\n` +
+    `Your Session ID is: ${sessionId}\r\n` +
+    `Your Inbox is at: $PIXEL_AGENTS_INBOX\r\n` +
+    `[END SYSTEM DIRECTIVE]\r\n`
   );
 }
 
