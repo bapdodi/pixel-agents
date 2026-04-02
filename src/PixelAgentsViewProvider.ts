@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 import {
+  cleanupLegacyMcpServers,
   getProjectDirPath,
   launchNewTerminal,
   persistAgents,
@@ -348,7 +349,9 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
               },
             );
           },
+          sendTextToTerminal,
         );
+        await cleanupLegacyMcpServers();
         await sendRegistryToWebview();
       } else if (message.type === 'coordination') {
         if (message.subtype === 'saveRole') {
@@ -421,7 +424,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const cfg = await readConfig();
         cfg.recentAgentDirectories = [
           pickedPath,
-          ...cfg.recentAgentDirectories.filter((dir) => dir !== pickedPath),
+          ...cfg.recentAgentDirectories.filter((dir: string) => dir !== pickedPath),
         ].slice(0, 8);
         await writeConfig(cfg);
         this.webview?.postMessage({

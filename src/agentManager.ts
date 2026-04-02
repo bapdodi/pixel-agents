@@ -89,8 +89,117 @@ async function getNodeCommand(): Promise<string> {
   return 'node';
 }
 
-function getSessionMcpServerName(sessionId: string): string {
-  return `pixel-agents-${sessionId}`;
+const SHARED_MCP_SERVER_NAME = 'pixel-agents';
+let sharedCodexMcpEnsured = false;
+let sharedGeminiMcpEnsured = false;
+
+async function listCodexMcpServerNames(): Promise<string[]> {
+  try {
+    const command = os.platform() === 'win32' ? 'cmd /c codex mcp list' : 'codex mcp list';
+    const { stdout } = await execAsync(command, { timeout: 5000 });
+    return stdout
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.startsWith('pixel-agents-'))
+      .map((line: string) => line.split(/\s+/)[0]);
+  } catch (err) {
+    console.warn('[AgentManager] Failed to list Codex MCP servers:', err);
+    return [];
+  }
+}
+
+async function listGeminiMcpServerNames(): Promise<string[]> {
+  try {
+    const { stdout } = await execAsync('npx gemini mcp list', { timeout: 5000 });
+    return stdout
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.startsWith('pixel-agents'))
+      .map((line: string) => line.split(/\s+/)[0]);
+  } catch (err) {
+    console.warn('[AgentManager] Failed to list Gemini MCP servers:', err);
+    return [];
+  }
+}
+
+async function removeCodexMcpServer(serverName: string): Promise<void> {
+  const command =
+    os.platform() === 'win32'
+      ? `cmd /c codex mcp remove "${serverName}"`
+      : `codex mcp remove "${serverName}"`;
+  await execAsync(command, { timeout: 5000 });
+}
+
+async function removeGeminiMcpServer(serverName: string): Promise<void> {
+  await execAsync(`npx gemini mcp remove "${serverName}"`, { timeout: 5000 });
+}
+
+async function ensureSharedCodexMcpServer(extensionPath: string): Promise<void> {
+  if (sharedCodexMcpEnsured) return;
+
+  const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
+  const coordDir = getCoordDir();
+  const nodeCommand = await getNodeCommand();
+  const addCmd =
+    `codex mcp add "${SHARED_MCP_SERVER_NAME}" ` +
+    `--env PIXEL_AGENTS_COORD_DIR=${coordDir} ` +
+    `-- ${nodeCommand} "${mcpServerPath}"`;
+
+  try {
+    await removeCodexMcpServer(SHARED_MCP_SERVER_NAME);
+  } catch {
+    /* ignore */
+  }
+
+  await execAsync(addCmd);
+  sharedCodexMcpEnsured = true;
+}
+
+async function ensureSharedGeminiMcpServer(extensionPath: string): Promise<void> {
+  if (sharedGeminiMcpEnsured) return;
+
+  const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
+  const coordDir = getCoordDir();
+  const nodeCommand = await getNodeCommand();
+  const addCmd =
+    `npx gemini mcp add "${SHARED_MCP_SERVER_NAME}" ` +
+    `--env PIXEL_AGENTS_COORD_DIR=${coordDir} ` +
+    `-- ${nodeCommand} "${mcpServerPath}"`;
+
+  try {
+    await removeGeminiMcpServer(SHARED_MCP_SERVER_NAME);
+  } catch {
+    /* ignore */
+  }
+
+  await execAsync(addCmd);
+  sharedGeminiMcpEnsured = true;
+}
+
+export async function cleanupLegacyMcpServers(): Promise<void> {
+  const legacyCodexServers = (await listCodexMcpServerNames()).filter(
+    (name) => name.startsWith('pixel-agents-') && name !== SHARED_MCP_SERVER_NAME,
+  );
+  for (const serverName of legacyCodexServers) {
+    try {
+      await removeCodexMcpServer(serverName);
+      console.log(`[AgentManager] Removed legacy Codex MCP server: ${serverName}`);
+    } catch (err) {
+      console.warn(`[AgentManager] Failed to remove legacy Codex MCP server ${serverName}:`, err);
+    }
+  }
+
+  const legacyGeminiServers = (await listGeminiMcpServerNames()).filter(
+    (name) => name.startsWith('pixel-agents-') && name !== SHARED_MCP_SERVER_NAME,
+  );
+  for (const serverName of legacyGeminiServers) {
+    try {
+      await removeGeminiMcpServer(serverName);
+      console.log(`[AgentManager] Removed legacy Gemini MCP server: ${serverName}`);
+    } catch (err) {
+      console.warn(`[AgentManager] Failed to remove legacy Gemini MCP server ${serverName}:`, err);
+    }
+  }
 }
 
 function resolveLaunchCwd(folderPath?: string): string {
@@ -167,51 +276,27 @@ export async function launchNewTerminal(
       if (extensionPath) {
         if (providerId === 'claude') {
           try {
-            const mcpPath = await writeMcpConfig(sessionId, extensionPath);
+            const mcpPath = await writeMcpConfig(extensionPath);
             cmd += ` --mcp-config "${mcpPath}"`;
             console.log(`[AgentManager] 🛠️ Claude MCP Config generated: ${mcpPath}`);
           } catch (e) {
             console.warn('[AgentManager] Failed to create Claude MCP config:', e);
           }
         } else if (providerId === 'gemini') {
-          // Gemini uses 'gemini mcp add' to register servers
           try {
-            const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
-            // We use a unique name for this session's server
-            const serverName = getSessionMcpServerName(sessionId);
+            await ensureSharedGeminiMcpServer(extensionPath);
+            const serverName = SHARED_MCP_SERVER_NAME;
+            cmd += ` --allowed-mcp-server-names "${SHARED_MCP_SERVER_NAME}"`;
 
-            // 1. Add the MCP server to Gemini CLI
-            const addCmd = `gemini mcp add "${serverName}" node "${mcpServerPath}" --env PIXEL_AGENTS_SESSION_ID=${sessionId}`;
             console.log(`[AgentManager] 🛠️ Registering Gemini MCP server: ${serverName}`);
-
-            // Execute the add command (it's persistent for the user, but needed for the session)
-            await execAsync(addCmd);
-
-            // 2. Allow this server specifically for this session
-            cmd += ` --allowed-mcp-server-names "${serverName}"`;
           } catch (e) {
             console.warn('[AgentManager] Failed to register Gemini MCP server:', e);
           }
         } else if (providerId === 'openai') {
           try {
-            const mcpServerPath = path.join(extensionPath, 'dist', 'mcp-server.js');
-            const serverName = getSessionMcpServerName(sessionId);
-            const coordDir = getCoordDir();
-            const nodeCommand = await getNodeCommand();
-            const addCmd =
-              `codex mcp add "${serverName}" ` +
-              `--env PIXEL_AGENTS_SESSION_ID=${sessionId} ` +
-              `--env PIXEL_AGENTS_COORD_DIR=${coordDir} ` +
-              `-- ${nodeCommand} "${mcpServerPath}"`;
+            await ensureSharedCodexMcpServer(extensionPath);
+            const serverName = SHARED_MCP_SERVER_NAME;
             console.log(`[AgentManager] 🛠️ Registering Codex MCP server: ${serverName}`);
-
-            try {
-              await execAsync(`codex mcp remove "${serverName}"`);
-            } catch {
-              // Ignore if the server was not registered yet.
-            }
-
-            await execAsync(addCmd);
           } catch (e) {
             console.warn('[AgentManager] Failed to register Codex MCP server:', e);
           }
@@ -220,6 +305,21 @@ export async function launchNewTerminal(
 
       const resolvedCmd = await resolveClaudeCommand(cmd);
       const projectDir = await provider.getProjectDir(cwd);
+
+      // Ensure the project directory exists before starting the agent
+      // Use a more robust check and creation logic
+      try {
+        if (!fs.existsSync(projectDir)) {
+          fs.mkdirSync(projectDir, { recursive: true });
+          console.log(`[AgentManager] 📁 Project directory created: ${projectDir}`);
+        } else {
+          console.log(`[AgentManager] 📁 Project directory already exists: ${projectDir}`);
+        }
+      } catch (e) {
+        console.error(`[AgentManager] ❌ Failed to create project directory ${projectDir}:`, e);
+        // Fallback to homedir if projectDir creation fails (emergency measure)
+      }
+
       const expectedFile = await provider.getExpectedFile(projectDir, sessionId);
       knownJsonlFiles.add(expectedFile);
 
@@ -244,9 +344,12 @@ export async function launchNewTerminal(
           const a = agents.get(id);
           if (!a) return;
 
-          // Convert raw data to string (strip some ANSI or handle as-is)
-          const chunk = data;
-          a.lineBuffer += chunk;
+          // Convert raw data to string and strip ANSI codes for regex matching
+          const cleanChunk = data.replace(
+            /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+            '',
+          );
+          a.lineBuffer += cleanChunk;
 
           // Dynamic Session ID Detection (e.g. for Gemini)
           if (!a.jsonlFileResolved && provider.getSessionIdRegex) {
@@ -348,13 +451,24 @@ export async function launchNewTerminal(
       // Inject coordination context into PTY after startup settles
       if (
         agent.pty &&
+        !agent.coordContextInjected &&
         (providerId === 'claude' || providerId === 'gemini' || providerId === 'openai')
       ) {
         const capturedPty = agent.pty;
         setTimeout(() => {
           try {
+            // Check again inside timeout to be safe
+            const currentAgent = agents.get(id);
+            if (!currentAgent || currentAgent.coordContextInjected) return;
+
             const msg = buildCoordContextMessage(agent);
+            if (!msg) {
+              currentAgent.coordContextInjected = true;
+              return;
+            }
             capturedPty.ptyProcess.write(msg + '\r');
+            currentAgent.coordContextInjected = true;
+            console.log(`[AgentManager] 💉 Coordination context injected for Agent ${id}`);
           } catch (e) {
             console.warn('[AgentManager] Failed to inject coord context:', e);
           }
@@ -424,15 +538,6 @@ export async function removeAgent(
   }
 
   if (agent.sessionId) {
-    if (agent.providerId === 'openai') {
-      const serverName = getSessionMcpServerName(agent.sessionId);
-      try {
-        await execAsync(`codex mcp remove "${serverName}"`);
-      } catch (err) {
-        console.warn(`[AgentManager] Failed to remove Codex MCP server ${serverName}:`, err);
-      }
-    }
-
     await deregisterAgent(agent.sessionId);
   }
 

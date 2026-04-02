@@ -66,11 +66,11 @@ export function getMcpConfigsDir(): string {
   return path.join(getCoordDir(), COORDINATION_MCP_CONFIGS_DIR);
 }
 
-export function getMcpConfigFilePath(sessionId: string): string {
-  return path.join(getMcpConfigsDir(), `${sessionId}.json`);
+export function getMcpConfigFilePath(): string {
+  return path.join(getMcpConfigsDir(), 'shared.json');
 }
 
-export async function writeMcpConfig(sessionId: string, extensionPath: string): Promise<string> {
+export async function writeMcpConfig(extensionPath: string): Promise<string> {
   const dir = getMcpConfigsDir();
   await fs.promises.mkdir(dir, { recursive: true });
 
@@ -81,14 +81,13 @@ export async function writeMcpConfig(sessionId: string, extensionPath: string): 
         command: 'node',
         args: [mcpServerPath],
         env: {
-          PIXEL_AGENTS_SESSION_ID: sessionId,
           PIXEL_AGENTS_COORD_DIR: getCoordDir(),
         },
       },
     },
   };
 
-  const filePath = getMcpConfigFilePath(sessionId);
+  const filePath = getMcpConfigFilePath();
   await fs.promises.writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8');
   return filePath;
 }
@@ -247,6 +246,30 @@ const inboxOffsets = new Map<string, number>();
 
 export function resetInboxOffset(sessionId: string): void {
   inboxOffsets.set(sessionId, 0);
+}
+
+export async function readInboxMessages(sessionId: string): Promise<CoordinationMessage[]> {
+  const filePath = getInboxFilePath(sessionId);
+  const messages: CoordinationMessage[] = [];
+
+  try {
+    const content = await fs.promises.readFile(filePath, 'utf-8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const msg = JSON.parse(trimmed) as CoordinationMessage;
+        messages.push(msg);
+      } catch {
+        /* skip malformed */
+      }
+    }
+  } catch {
+    // inbox doesn't exist yet or other read error
+  }
+
+  return messages;
 }
 
 export async function readNewInboxMessages(sessionId: string): Promise<CoordinationMessage[]> {

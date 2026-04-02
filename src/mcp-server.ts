@@ -1,20 +1,15 @@
 #!/usr/bin/env node
 import {
-  appendToInbox,
-  readAgentEntry,
-  rebuildRegistry,
-  writeAgentEntry,
-} from './coordinationPersistence.js';
-import { CoordinationMessage } from './types.js';
+  checkMessagesEvent,
+  listAgentsEvent,
+  resolveEventBusSessionId,
+  sendMessageEvent,
+  sessionIdSchema,
+  setRoleEvent,
+  spawnAgentEvent,
+} from './eventBus.js';
 
-const SESSION_ID = process.env.PIXEL_AGENTS_SESSION_ID;
-
-if (!SESSION_ID) {
-  process.stderr.write('Error: PIXEL_AGENTS_SESSION_ID not set\n');
-  process.exit(1);
-}
-
-const sessionId: string = SESSION_ID;
+const ENV_SESSION_ID = process.env.PIXEL_AGENTS_SESSION_ID;
 
 process.stdin.setEncoding('utf8');
 
@@ -92,7 +87,7 @@ async function handleRequest(rawRequest: string): Promise<void> {
       sendResponse(id, {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'pixel-agents-mcp', version: '1.0.0' },
+        serverInfo: { name: 'pixel-agents-mcp', version: '2.0.0' },
       });
       return;
     }
@@ -107,12 +102,20 @@ async function handleRequest(rawRequest: string): Promise<void> {
             inputSchema: { type: 'object', properties: {} },
           },
           {
+            name: 'pa_check_messages',
+            description: 'Check your inbox for any new or existing messages from other agents.',
+            inputSchema: {
+              type: 'object',
+              properties: { ...sessionIdSchema(false) },
+            },
+          },
+          {
             name: 'pa_spawn_agent',
-            description:
-              'Spawn a new team member in Pixel Agents. Use this tool directly instead of inspecting internal files.',
+            description: 'Spawn a new team member in Pixel Agents through the shared event bus.',
             inputSchema: {
               type: 'object',
               properties: {
+                ...sessionIdSchema(false),
                 role: {
                   type: 'string',
                   description: 'Agent role, for example Backend Dev or QA Engineer.',
@@ -133,10 +136,11 @@ async function handleRequest(rawRequest: string): Promise<void> {
           {
             name: 'pa_send_message',
             description:
-              'Send a message to another agent by session ID. Resolve the target from pa_list_agents output.',
+              'Send a message to another agent by session ID through the shared event bus.',
             inputSchema: {
               type: 'object',
               properties: {
+                ...sessionIdSchema(false),
                 toSessionId: { type: 'string', description: 'Target agent session ID.' },
                 body: { type: 'string', description: 'Message body.' },
               },
@@ -149,6 +153,7 @@ async function handleRequest(rawRequest: string): Promise<void> {
             inputSchema: {
               type: 'object',
               properties: {
+                ...sessionIdSchema(false),
                 role: { type: 'string' },
                 description: { type: 'string' },
               },
@@ -166,76 +171,60 @@ async function handleRequest(rawRequest: string): Promise<void> {
       return;
     }
 
-    if (isNotification) {
-      return;
-    }
-
+    if (isNotification) return;
     sendResponse(id, {});
   } catch (err: any) {
     process.stderr.write(`Error handling request: ${err.message}\n`);
   }
 }
 
+function requireSession(args: Record<string, any>) {
+  const sessionId = resolveEventBusSessionId(args, ENV_SESSION_ID);
+  if (!sessionId) {
+    return {
+      error: {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: 'Missing sessionId. Provide sessionId in tool input or set PIXEL_AGENTS_SESSION_ID.',
+          },
+        ],
+      },
+    };
+  }
+
+  return { sessionId };
+}
+
 async function handleToolCall(name: string, args: Record<string, any>) {
   try {
     switch (name) {
-      case 'pa_list_agents': {
-        const registry = await rebuildRegistry();
-        return {
-          content: [
-            { type: 'text', text: JSON.stringify(Object.values(registry.agents), null, 2) },
-          ],
-        };
+      case 'pa_list_agents':
+        return await listAgentsEvent();
+
+      case 'pa_check_messages': {
+        const resolved = requireSession(args);
+        if ('error' in resolved) return resolved.error;
+        return await checkMessagesEvent(resolved.sessionId);
       }
 
       case 'pa_spawn_agent': {
-        const spawnMsg: Partial<CoordinationMessage> = {
-          type: 'spawn_agent',
-          body: JSON.stringify({
-            providerId: args.provider || 'gemini',
-            role: args.role,
-            description: args.description || '',
-          }),
-          sentAt: Date.now(),
-        };
-        await appendToInbox(sessionId, spawnMsg as CoordinationMessage);
-        return {
-          content: [
-            { type: 'text', text: `Spawn requested: ${args.role} (${args.provider || 'gemini'})` },
-          ],
-        };
+        const resolved = requireSession(args);
+        if ('error' in resolved) return resolved.error;
+        return await spawnAgentEvent(resolved.sessionId, args);
       }
 
       case 'pa_send_message': {
-        const msg: Partial<CoordinationMessage> = {
-          type: 'send_to',
-          toSessionId: args.toSessionId,
-          body: args.body,
-          sentAt: Date.now(),
-        };
-        await appendToInbox(sessionId, msg as CoordinationMessage);
-        return {
-          content: [{ type: 'text', text: 'Message sent.' }],
-        };
+        const resolved = requireSession(args);
+        if ('error' in resolved) return resolved.error;
+        return await sendMessageEvent(resolved.sessionId, args);
       }
 
       case 'pa_set_role': {
-        const entry = await readAgentEntry(sessionId);
-        if (!entry) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: 'Agent registry entry not found.' }],
-          };
-        }
-
-        entry.role = args.role;
-        entry.roleDescription = args.description || '';
-        entry.updatedAt = Date.now();
-        await writeAgentEntry(entry);
-
-        return {
-          content: [{ type: 'text', text: `Role updated to '${args.role}'.` }],
-        };
+        const resolved = requireSession(args);
+        if ('error' in resolved) return resolved.error;
+        return await setRoleEvent(resolved.sessionId, args);
       }
 
       default:
@@ -254,5 +243,5 @@ async function handleToolCall(name: string, args: Record<string, any>) {
 
 function sendResponse(id: unknown, result: unknown): void {
   const payload = JSON.stringify({ jsonrpc: '2.0', id, result });
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(payload, 'utf8')}\r\n\r\n${payload}`);
+  process.stdout.write(payload + '\n');
 }

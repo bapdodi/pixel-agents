@@ -13,7 +13,9 @@ export class GeminiProvider implements AIProvider {
     _sessionId: string,
     _options: { bypassPermissions?: boolean },
   ): Promise<string> {
-    return `npx gemini`;
+    const startupPrompt =
+      'You are a Pixel Agents team member. Use the MCP tools pa_list_agents, pa_check_messages, pa_send_message, pa_spawn_agent, and pa_set_role for coordination. Do not inspect internal files like registry.json or layout.json. PIXEL_AGENTS_SESSION_ID is already available in the environment if the tools need caller context. Continue in interactive mode.';
+    return `npx gemini -i "${startupPrompt}"`;
   }
 
   getSessionIdRegex(): RegExp {
@@ -32,7 +34,12 @@ export class GeminiProvider implements AIProvider {
     } catch {
       /* ignore */
     }
-    return path.join(os.homedir(), '.gemini', 'projects', cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+    // Better path to folder mapping for Windows/POSIX
+    const dirName = cwd
+      .replace(/[:\\/]/g, '-')
+      .replace(/--+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return path.join(os.homedir(), '.gemini', 'projects', dirName);
   }
 
   async getExpectedFile(projectDir: string, sessionId: string): Promise<string> {
